@@ -23,6 +23,20 @@ test("parser accepts JSONL, arrays, snake case and per-account realm", () => {
   const many = parseCredentials('[{"accessToken":"a"},{"accessToken":"b","realm":"intl"}]', "cn");
   assert.equal(many.length, 2); assert.equal(many[1].realm, "intl");
 });
+test("parser adapts account/auth wrapper exported by desktop tools", () => {
+  const [credential] = parseCredentials(JSON.stringify({
+    account: { uid: "nested-uid", nickname: "nested-name", enterpriseId: "enterprise" },
+    auth: { accessToken: "nested-access", refreshToken: "nested-refresh", realm: "intl", domain: "example.com" },
+  }));
+  assert.deepEqual(credential, { uid: "nested-uid", nickname: "nested-name", enterpriseId: "enterprise", accessToken: "nested-access", refreshToken: "nested-refresh", realm: "intl", domain: "example.com" });
+});
+test("parser adapts exported arrays and TXT content with nested token containers", () => {
+  const text = JSON.stringify([{ id: "export-id", uid: "u1", access_token: "snake", refresh_token: "refresh" }]);
+  const snake = parseCredentials(text)[0];
+  assert.equal(snake.uid, "u1"); assert.equal(snake.accessToken, "snake"); assert.equal(snake.refreshToken, "refresh");
+  const [nested] = parseCredentials(JSON.stringify({ user: { user_id: "u2" }, credentials: { access_token: "a", refresh_token: "r", region: "global" } }));
+  assert.equal(nested.uid, "u2"); assert.equal(nested.accessToken, "a"); assert.equal(nested.realm, "intl");
+});
 test("parser rejects missing tokens, invalid JSON and empty input", () => {
   for (const text of ["", '{"uid":"no-token"}', '{bad', "null", "[]"]) assert.throws(() => parseCredentials(text), CheckError);
 });

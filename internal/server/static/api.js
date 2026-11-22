@@ -33,12 +33,17 @@
   }
   function normalizeCredential(raw, fallbackRealm) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CheckError("凭证必须是 JSON 对象", "input");
-    const token = String(raw.accessToken || raw.access_token || raw.token || "").trim();
-    if (!token) throw new CheckError("缺少 accessToken", "input");
-    return { uid: String(raw.uid || raw.userId || raw.user_id || ""), accessToken: token,
-      refreshToken: String(raw.refreshToken || raw.refresh_token || ""), realm: credentialRealm(raw, fallbackRealm),
-      domain: String(raw.domain || ""), enterpriseId: String(raw.enterpriseId || raw.enterprise_id || ""),
-      nickname: String(raw.nickname || raw.name || "") };
+    // Exporters commonly wrap tokens in auth/tokens/credentials and identity in
+    // account/profile/user. Prefer the token container, then merge its parents
+    // for realm/domain without overriding explicitly supplied fields.
+    const auth = [raw.auth, raw.tokens, raw.tokenData, raw.credentials, raw.data].find(value => value && typeof value === "object" && !Array.isArray(value) && (value.accessToken || value.access_token || value.token)) || raw;
+    const profile = [raw.account, raw.profile, raw.user, raw.userInfo, raw.data].find(value => value && typeof value === "object" && !Array.isArray(value)) || {};
+    const token = String(auth.accessToken || auth.access_token || auth.token || raw.accessToken || raw.access_token || raw.token || "").trim();
+    if (!token) throw new CheckError("未找到 accessToken 或 access_token", "input");
+    return { uid: String(profile.uid || profile.userId || profile.user_id || raw.uid || raw.userId || raw.user_id || ""), accessToken: token,
+      refreshToken: String(auth.refreshToken || auth.refresh_token || raw.refreshToken || raw.refresh_token || ""), realm: credentialRealm({ ...raw, ...auth }, fallbackRealm),
+      domain: String(auth.domain || raw.domain || ""), enterpriseId: String(profile.enterpriseId || profile.enterprise_id || auth.enterpriseId || auth.enterprise_id || raw.enterpriseId || raw.enterprise_id || ""),
+      nickname: String(profile.nickname || profile.name || raw.nickname || raw.name || "") };
   }
   function parseCredentials(text, fallbackRealm) {
     const trimmed = String(text || "").trim();

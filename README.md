@@ -47,6 +47,8 @@ WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.0.0 docker compose up -d
 
 也支持 `access_token`／`refresh_token` 字段。`realm` 为 `cn` 或 `intl`；缺省时使用页面选择的版本。支持上游 `enterpriseId`、`domain`、`nickname` 字段。API Key 使用 `accessToken` 传入，不能刷新令牌。
 
+支持自动适配常见导出结构，包括顶层账号数组，以及 `{ "account": {...}, "auth": { "accessToken": "...", "refreshToken": "..." } }` 包装格式。令牌容器可使用 `auth`、`tokens`、`tokenData` 或 `credentials`，账号资料可从 `account`、`profile`、`user`、`userInfo` 合并。`.json`、`.jsonl` 和 `.txt` 文件均可多选或拖放导入，内容必须是 JSON 对象、JSON 数组或 JSONL。
+
 ### 上游接口链路与 CORS
 
 实现参考 `workbuddy2api-hub-main/wb_accounts.py`：
