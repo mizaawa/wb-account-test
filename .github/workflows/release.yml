@@ -83,7 +83,7 @@ jobs:
             ```sh
             docker compose pull && docker compose up -d
             ```
-            镜像：`ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}`
+            镜像：`ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}`
             支持 linux/amd64 与 linux/arm64。
       - name: Verify image manifest
-        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
