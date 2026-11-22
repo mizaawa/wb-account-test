@@ -1,0 +1,21 @@
+services:
+  wb-pulse:
+    image: ${WB_IMAGE:-ghcr.io/mizaawa/wb-account-test:latest}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    environment:
+      ADDR: ":8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=1m,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/wb-pulse", "--healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
