@@ -24,6 +24,16 @@ async function assertWidth(page, width, label) {
   assert.equal(sizes.viewport, width, label + ': viewport should not auto-zoom out');
   assert.ok(sizes.doc <= sizes.client + 1 && sizes.body <= sizes.client + 1, label + ': page overflow ' + JSON.stringify(sizes));
   assert.ok(sizes.results <= width, label + ': results fit viewport');
+  const painted = await page.evaluate(() => {
+    const limit = document.documentElement.clientWidth;
+    return { visual: visualViewport.width, offset: visualViewport.offsetLeft,
+      outside: Array.from(document.body.children).filter(el => {
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && (rect.left < -1 || rect.right > limit + 1);
+      }).map(el => el.id || el.className || el.tagName) };
+  });
+  assert.deepEqual(painted.outside, [], label + ': offscreen page layers');
+  assert.ok(Math.abs(painted.visual - width) <= 1 && Math.abs(painted.offset) <= 1, label + ': visual viewport ' + JSON.stringify(painted));
 }
 (async () => {
   await fs.mkdir(path.join(root, 'test-results'), { recursive: true });
@@ -58,17 +68,14 @@ async function assertWidth(page, width, label) {
     assert.ok(await page.locator('#import-progress').isVisible());
     assert.ok(await page.locator('#check-button').isDisabled());
     await page.waitForFunction(() => document.getElementById('import-percent').textContent === '100%' && !document.getElementById('upload-button').disabled);
-    assert.match(await page.locator('#import-status').textContent(), /新增 42/);
-    assert.equal(await page.locator('.file-chip').count(), 6);
-    assert.ok(await page.locator('#file-chips').evaluate(el => el.getBoundingClientRect().height <= 112));
-    await page.locator('.file-toggle').click();
-    assert.equal(await page.locator('.file-chip').count(), 43);
-    assert.ok(await page.locator('#file-chips').evaluate(el => el.getBoundingClientRect().height <= 180));
-    await page.locator('.file-toggle').click();
+    assert.equal(await page.locator('#import-progress').isVisible(), false);
+    assert.equal(await page.locator('#file-chips, .file-chip, .file-toggle, #line-count').count(), 0);
+    assert.equal(await page.locator('#toast').textContent(), '导入完成');
     await assertWidth(page, width, 'imported ' + width);
     await page.locator('#file-input').setInputFiles([fixtureFile(0)]);
     await page.waitForFunction(() => !document.getElementById('upload-button').disabled);
-    assert.match(await page.locator('#import-status').textContent(), /跳过 1/);
+    await page.waitForFunction(()=>document.getElementById('toast').textContent==='这些凭证已在输入框中');
+    assert.equal(await page.locator('#import-progress').isVisible(),false);
     assert.equal((await page.locator('#credential-input').inputValue()).trim().split(/\r?\n/).length,42);
     await page.locator('#check-button').click();
     await page.waitForFunction(() => document.getElementById('stat-success').textContent === '42' && document.getElementById('check-label').textContent === '开始测活');
@@ -87,6 +94,21 @@ async function assertWidth(page, width, label) {
     await delay(100); assert.equal(choosers,2);
     await page.locator('#file-input').dispatchEvent('cancel');
     console.log('PASS viewport/import/picker/results',width);
+    await context.close();
+  }
+  // Rotate a phone, and simulate touch with a desktop-sized layout viewport.
+  for (const desktopMode of [false, true]) {
+    const context = await browser.newContext({isMobile: !desktopMode && browserName !== 'firefox', hasTouch:true, deviceScaleFactor:2, viewport:{width:desktopMode ? 980 : 390, height:844}});
+    const page = await context.newPage();
+    await page.goto(base);
+    for (const [width,height] of (desktopMode ? [[980,844],[1024,390]] : [[390,844],[844,390],[390,844]])) {
+      await page.setViewportSize({width,height});
+      await page.locator('#credential-input').focus();
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+      await assertWidth(page,width,(desktopMode?'desktop-touch':'phone-rotate')+' focused '+width);
+      assert.ok(await page.locator('#credential-input').evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 16));
+      await page.locator('#credential-input').blur();
+    }
     await context.close();
   }
   // Native user chooser + real DataTransfer objects: every visible import surface.
@@ -114,7 +136,7 @@ async function assertWidth(page, width, label) {
       await dropAt(selector,[i*2,i*2+1],i===2);
       expected+=2;
       await page.waitForFunction(n=>document.getElementById('credential-input').value.trim().split(/\r?\n/).length===n && !document.getElementById('upload-button').disabled,expected);
-      assert.match(await page.locator('#import-status').textContent(),/新增 2/);
+      assert.equal(await page.locator('#import-progress').isVisible(),false);
     }
     await dropAt('#import-workspace',[100,101]);
     await page.waitForFunction(()=>document.getElementById('upload-button').disabled);
@@ -123,7 +145,7 @@ async function assertWidth(page, width, label) {
     await page.waitForFunction(n=>document.getElementById('credential-input').value.trim().split(/\r?\n/).length===n && !document.getElementById('upload-button').disabled,expected);
     assert.equal(await page.locator('#import-percent').textContent(),'100%');
     await dropAt('#import-workspace',[100,101]);
-    await page.waitForFunction(()=>document.getElementById('import-status').textContent.includes('跳过 2'));
+    await page.waitForFunction(()=>document.getElementById('toast').textContent==='这些凭证已在输入框中');
     assert.equal((await page.locator('#credential-input').inputValue()).split(/\r?\n/).length,expected);
     assert.ok(requests.every(url=>url.startsWith(base)), 'import must not upload files to any server');
     assert.equal(requests.filter(url=>url.includes('/api/')).length,0,'import only reads locally');
@@ -180,7 +202,9 @@ async function assertWidth(page, width, label) {
   await page.locator('#file-input').setInputFiles([{name:'broken.json',mimeType:'application/json',buffer:Buffer.from('{invalid')},fixtureFile(88)]);
   await page.waitForFunction(()=>!document.getElementById('upload-button').disabled);
   assert.ok(await page.locator('#import-error').isVisible());
-  assert.match(await page.locator('#import-status').textContent(),/新增 1.*1 个文件失败/);
+  assert.equal(await page.locator('#import-progress').isVisible(),false);
+  assert.match(await page.locator('#import-error').textContent(),/broken\.json/);
+  assert.equal(JSON.parse(await page.locator('#credential-input').inputValue()).uid,'fixture-88');
   assert.equal(await page.locator('#check-button').isDisabled(),false);
   await page.locator('#clear-button').click(); assert.equal(await page.locator('#import-progress').isVisible(),false);
   assert.equal(await page.locator('#credential-input').inputValue(),'');

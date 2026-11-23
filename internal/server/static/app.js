@@ -20,15 +20,13 @@
   if (typeof module === "object" && module.exports) { module.exports = { runPool }; return; }
   const $ = id => document.getElementById(id);
   const input = $("credential-input");
-  let importing = false, pickerPending = false, pickerTimer, filesExpanded = false;
+  let importing = false, pickerPending = false, pickerTimer;
   const importQueue = [];
   let importQueueScheduled = false;
-  let accounts = [], importedFiles = [], filter = "all", running = false, controller = null, timer = null, startedAt = 0, toastTimer;
+  let accounts = [], filter = "all", running = false, controller = null, timer = null, startedAt = 0, toastTimer;
   const statusLabels = { pending: "等待检测", testing: "检测中", success: "检测成功", failed: "检测失败", cancelled: "已取消" };
   function toast(message) { clearTimeout(toastTimer); $("toast").textContent = message; $("toast").classList.add("show"); toastTimer = setTimeout(() => $("toast").classList.remove("show"), 3000); }
   function updateInput() {
-    const lines = input.value.trim() ? input.value.trim().split(/\r?\n/).length : 0;
-    $("line-count").textContent = lines + " 行内容";
     $("check-button").disabled = importing || importQueue.length > 0 || (!running && !input.value.trim());
     $("import-error").hidden = true;
   }
@@ -129,18 +127,6 @@
     $("filter-all-count").textContent = total; $("filter-success-count").textContent = success; $("filter-failed-count").textContent = failed;
   }
   const nextPaint = () => new Promise(resolve => setTimeout(resolve, 0));
-  function renderFiles() {
-    const names = [...new Set(importedFiles)], chips = $("file-chips");
-    chips.replaceChildren(); chips.hidden = !names.length;
-    chips.classList.toggle("expanded", filesExpanded);
-    const shown = filesExpanded ? names : names.slice(0, 5);
-    for (const name of shown) { const chip = element("span", "file-chip", name); chip.title = name; chips.append(chip); }
-    if (names.length > 5) {
-      const toggle = element("button", "file-chip file-toggle", filesExpanded ? "收起文件列表" : "另 " + (names.length - 5) + " 个文件 · 展开");
-      toggle.type = "button"; toggle.setAttribute("aria-expanded", String(filesExpanded));
-      toggle.addEventListener("click", () => { filesExpanded = !filesExpanded; renderFiles(); }); chips.append(toggle);
-    }
-  }
   function importProgress(percent, message) {
     $("import-progress").hidden = false;
     $("import-status").textContent = message;
@@ -163,7 +149,7 @@
     const selected = Array.from(files || []);
     if (!selected.length) return;
     importing = true; pickerPending = false; clearTimeout(pickerTimer); setControls();
-    const loaded = [], errors = [], names = [];
+    const loaded = [], errors = [];
     let duplicates = 0, existing = [], processed = 0;
     $("import-error").hidden = true;
     importProgress(0, "准备读取 " + selected.length + " 个文件…");
@@ -186,18 +172,20 @@
           for (const credential of parsed) { const id = key(credential); if (localSeen.has(id)) { skipped++; continue; } localSeen.add(id); unique.push(credential); }
           if (existing.length + loaded.length + unique.length > 2000) throw new Error("总账号数超过 2000，请减少文件或清空后导入");
           for (const credential of unique) { seen.add(key(credential)); loaded.push(credential); }
-          duplicates += skipped; names.push(file.name);
+          duplicates += skipped;
         } catch (error) { errors.push(file.name + "：" + error.message); }
         processed++;
         importProgress(Math.round(processed / selected.length * 100), "已处理 " + processed + " / " + selected.length + " 个文件");
         await nextPaint();
       }
       if (loaded.length) input.value = [...existing, ...loaded].map(credential => JSON.stringify(credential)).join("\n");
-      importedFiles.push(...names); renderFiles(); updateInput();
-      const summary = "导入完成：新增 " + loaded.length + " 个凭证" + (duplicates ? "，跳过 " + duplicates + " 个重复凭证" : "") + (errors.length ? "，" + errors.length + " 个文件失败" : "");
-      importProgress(100, summary); toast(summary);
-    } catch (error) { errors.push(error.message); importProgress(0, "导入未完成，请检查提示后重试"); }
+      updateInput();
+      if (loaded.length) toast(errors.length ? "部分文件已导入，请查看错误提示" : "导入完成");
+      else if (!errors.length && duplicates) toast("这些凭证已在输入框中");
+    } catch (error) { errors.push(error.message); }
     finally {
+      $("import-progress").hidden = true;
+      $("import-status").textContent = "";
       if (errors.length) { $("import-error").textContent = errors.join("；"); $("import-error").hidden = false; }
       importing = false; $("file-input").value = ""; setControls();
     }
@@ -304,9 +292,8 @@
   $("check-button").addEventListener("click", () => startRun());
   $("clear-button").addEventListener("click", () => {
     if (running || importing) return;
-    releasePicker(); importQueue.length = 0; filesExpanded = false; $("import-progress").hidden = true;
-    input.value = ""; accounts = []; importedFiles = []; filter = "all"; startedAt = 0; controller = null;
-    $("file-chips").hidden = true; $("file-chips").replaceChildren();
+    releasePicker(); importQueue.length = 0; $("import-progress").hidden = true;
+    input.value = ""; accounts = []; filter = "all"; startedAt = 0; controller = null;
     document.querySelectorAll(".filter-pill").forEach(button => { const active = button.dataset.filter === "all"; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); });
     updateInput(); updateStats(); renderRows(); progress(); setControls(); toast("已清空当前页面中的数据");
   });
