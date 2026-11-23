@@ -21,22 +21,24 @@
   const $ = id => document.getElementById(id);
   const input = $("credential-input");
   let importing = false, pickerPending = false, pickerTimer, filesExpanded = false;
+  const importQueue = [];
+  let importQueueScheduled = false;
   let accounts = [], importedFiles = [], filter = "all", running = false, controller = null, timer = null, startedAt = 0, toastTimer;
   const statusLabels = { pending: "等待检测", testing: "检测中", success: "检测成功", failed: "检测失败", cancelled: "已取消" };
   function toast(message) { clearTimeout(toastTimer); $("toast").textContent = message; $("toast").classList.add("show"); toastTimer = setTimeout(() => $("toast").classList.remove("show"), 3000); }
   function updateInput() {
     const lines = input.value.trim() ? input.value.trim().split(/\r?\n/).length : 0;
     $("line-count").textContent = lines + " 行内容";
-    $("check-button").disabled = importing || (!running && !input.value.trim());
+    $("check-button").disabled = importing || importQueue.length > 0 || (!running && !input.value.trim());
     $("import-error").hidden = true;
   }
   function setControls() {
-    const busy = running || importing;
+    const busy = running || importing || importQueue.length > 0;
     input.disabled = busy; $("upload-button").disabled = busy; $("file-input").disabled = busy;
     $("realm-select").disabled = busy; $("clear-button").disabled = busy;
     $("upload-label").textContent = importing ? "正在导入…" : "导入凭证文件";
     $("upload-button").setAttribute("aria-busy", String(importing));
-    $("check-button").disabled = importing || (!running && !input.value.trim());
+    $("check-button").disabled = importing || importQueue.length > 0 || (!running && !input.value.trim());
     $("check-button").classList.toggle("running", running);
     $("check-label").textContent = running ? "停止检测" : "开始测活";
     $("live-dot").classList.toggle("active", running);
@@ -252,23 +254,57 @@
   }
   input.addEventListener("input", updateInput);
   function releasePicker() { clearTimeout(pickerTimer); pickerPending = false; }
+  function scheduleImportQueue() {
+    if (importQueueScheduled || importing || !importQueue.length) return;
+    importQueueScheduled = true;
+    setTimeout(async () => {
+      importQueueScheduled = false;
+      if (importing || !importQueue.length) return;
+      await importFiles(importQueue.shift());
+      scheduleImportQueue();
+    }, 0);
+  }
+  function enqueueFiles(files) {
+    // Copy the browser-owned FileList during the change/drop event, before any await.
+    const selected = Array.from(files || []).filter(Boolean);
+    if (running) { toast("正在检测，请先停止检测后再导入"); return; }
+    if (!selected.length) { toast("未读取到文件，请选择文件而不是文件夹，或使用导入按钮"); return; }
+    if (selected.length > 100 || importQueue.reduce((n, batch) => n + batch.length, 0) + selected.length > 100) {
+      toast("每批及等待队列最多 100 个文件，请分批导入"); return;
+    }
+    if (selected.reduce((n, file) => n + file.size, 0) > 20 * 1024 * 1024 || importQueue.flat().reduce((n, file) => n + file.size, 0) + selected.reduce((n, file) => n + file.size, 0) > 20 * 1024 * 1024) {
+      toast("每批及等待队列总大小不能超过 20 MB"); return;
+    }
+    importQueue.push(selected);
+    setControls();
+    if (importing) toast("已加入导入队列：" + selected.length + " 个文件");
+    scheduleImportQueue();
+  }
+  // The transparent native input receives the real user tap/click. No synthetic
+  // label+button double activation, and no MIME filter that hides mobile files.
+  $("file-input").addEventListener("click", event => {
+    event.stopPropagation();
+    if (running || importing || pickerPending || event.detail > 1) { event.preventDefault(); return; }
+    pickerPending = true;
+  });
   $("upload-button").addEventListener("click", event => {
     event.preventDefault(); event.stopPropagation();
-    if (running || importing || pickerPending || event.detail > 1) return;
-    pickerPending = true;
-    try { $("file-input").click(); } catch (_) { releasePicker(); toast("无法打开文件选择器，请重新点击或拖放文件"); }
+    if (!running && !importing && !pickerPending) $("file-input").click();
   });
-  $("file-input").addEventListener("click", event => event.stopPropagation());
-  $("file-input").addEventListener("change", event => { releasePicker(); importFiles(event.target.files); });
+  $("file-input").addEventListener("change", event => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    releasePicker();
+    if (files.length) enqueueFiles(files);
+  });
   $("file-input").addEventListener("cancel", releasePicker);
-  // Older mobile pickers omit cancel; release only after returning to this page.
   const pickerReturned = () => { if (pickerPending) { clearTimeout(pickerTimer); pickerTimer = setTimeout(releasePicker, 500); } };
   window.addEventListener("focus", pickerReturned);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) pickerReturned(); });
   $("check-button").addEventListener("click", () => startRun());
   $("clear-button").addEventListener("click", () => {
     if (running || importing) return;
-    releasePicker(); filesExpanded = false; $("import-progress").hidden = true;
+    releasePicker(); importQueue.length = 0; filesExpanded = false; $("import-progress").hidden = true;
     input.value = ""; accounts = []; importedFiles = []; filter = "all"; startedAt = 0; controller = null;
     $("file-chips").hidden = true; $("file-chips").replaceChildren();
     document.querySelectorAll(".filter-pill").forEach(button => { const active = button.dataset.filter === "all"; button.classList.toggle("active", active); button.setAttribute("aria-pressed", String(active)); });
@@ -279,11 +315,34 @@
     document.querySelectorAll(".filter-pill").forEach(item => { const active = item === button; item.classList.toggle("active", active); item.setAttribute("aria-pressed", String(active)); });
     renderRows();
   }));
-  const dropZone = $("drop-zone");
-  for (const eventName of ["dragenter", "dragover"]) dropZone.addEventListener(eventName, event => { event.preventDefault(); if (!running && !importing) dropZone.classList.add("dragging"); });
-  for (const eventName of ["dragleave", "drop"]) dropZone.addEventListener(eventName, event => { event.preventDefault(); dropZone.classList.remove("dragging"); });
-  dropZone.addEventListener("drop", event => importFiles(event.dataTransfer.files));
-  for (const eventName of ["dragover", "drop"]) document.addEventListener(eventName, event => { event.preventDefault(); });
+  const dropZone = $("import-workspace");
+  let dragDepth = 0;
+  const hasFiles = transfer => transfer && (Array.from(transfer.types || []).includes("Files") || Array.from(transfer.items || []).some(item => item.kind === "file") || transfer.files?.length);
+  for (const eventName of ["dragenter", "dragover"]) dropZone.addEventListener(eventName, event => {
+    if (!hasFiles(event.dataTransfer)) return;
+    event.preventDefault(); event.stopPropagation();
+    if (eventName === "dragenter") dragDepth++;
+    event.dataTransfer.dropEffect = running ? "none" : "copy";
+    if (!running) dropZone.classList.add("dragging");
+  });
+  dropZone.addEventListener("dragleave", event => {
+    if (!hasFiles(event.dataTransfer)) return;
+    if (--dragDepth <= 0) { dragDepth = 0; dropZone.classList.remove("dragging"); }
+  });
+  dropZone.addEventListener("drop", event => {
+    if (!hasFiles(event.dataTransfer)) return;
+    event.preventDefault(); event.stopPropagation();
+    dragDepth = 0; dropZone.classList.remove("dragging"); releasePicker();
+    const transfer = event.dataTransfer;
+    let files = Array.from(transfer.files || []);
+    if (!files.length) files = Array.from(transfer.items || []).filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+    enqueueFiles(files);
+  });
+  for (const eventName of ["dragover", "drop"]) document.addEventListener(eventName, event => {
+    if (!hasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    if (eventName === "drop") { dragDepth = 0; dropZone.classList.remove("dragging"); toast("请把文件拖到导入账号凭证区域"); }
+  });
   document.addEventListener("visibilitychange", () => { if (document.hidden && timer) { clearInterval(timer); timer = null; } else if (!document.hidden && running && !timer) timer = setInterval(progress, 200); });
   updateInput(); updateStats(); setControls();
 })(typeof window !== "undefined" ? window : globalThis);

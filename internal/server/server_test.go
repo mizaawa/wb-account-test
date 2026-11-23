@@ -48,3 +48,19 @@ func TestHealthAndMethods(t *testing.T) {
 		t.Fatalf("missing status = %d", w.Code)
 	}
 }
+
+func TestRelayVersionAndAssetCache(t *testing.T) {
+	for _, path := range []string{"/api/status", "/", "/api.js?v=1.1.1", "/app.js?v=1.1.1"} {
+		w := httptest.NewRecorder()
+		New().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK || w.Header().Get("X-WB-Pulse-Version") != Version || w.Header().Get("Cache-Control") != "no-store, max-age=0" {
+			t.Fatalf("version/cache mismatch for %s: %d %v", path, w.Code, w.Header())
+		}
+		if path == "/api/status" {
+			var body map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body["version"] != Version || body["relay"] != "same-origin" || body["service"] != "wb-pulse" {
+				t.Fatalf("invalid status: %s", w.Body)
+			}
+		}
+	}
+}

@@ -1,0 +1,7 @@
+WB Pulse v@VERSION@ - Linux
+Extract; run chmod +x wb-pulse && ADDR=127.0.0.1:8080 ./wb-pulse.
+Optional install: sudo sh install.sh (or PREFIX="$HOME/.local" sh install.sh).
+Uninstall: remove the installed wb-pulse binary from the chosen prefix/bin.
+Install your distribution's ca-certificates package for official HTTPS endpoints.
+Set ADDR to change the bind address. Use HTTPS/access control for non-local deployments.
+Credentials pass through this server only for checks; the application does not persist them.

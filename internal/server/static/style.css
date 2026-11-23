@@ -305,3 +305,13 @@ main { min-width: 0; }
   h1 { font-size: 30px; }
   .hero-features i { display: none; }
 }
+
+/* Native multi-file selection and a complete desktop drop target. */
+.file-picker { position: relative; flex-shrink: 0; }
+.file-picker input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; z-index: 2; cursor: pointer; font-size: 16px; }
+.file-picker:focus-within .upload-button { outline: 2px solid #3888f9; outline-offset: 3px; }
+.file-picker input:disabled { cursor: wait; }
+.file-help { color: #7285a0; font-size: 12px; line-height: 1.7; margin: -10px 0 16px; overflow-wrap: anywhere; }
+.workspace.dragging { border-color: #3888f9; box-shadow: 0 0 0 4px #3a87f530; }
+.workspace.dragging .drop-zone { border-color: #3888f9; background: #f0f7ff; }
+.workspace.dragging .drop-zone::after { content: "松开即可批量导入文件"; position: absolute; inset: 0; display: grid; place-items: center; background: #eef6ffed; color: var(--blue); font-size: 18px; font-weight: 600; z-index: 3; pointer-events: none; }

@@ -11,6 +11,8 @@ function json(body, status = 200) { return { ok: status >= 200 && status < 300, 
 function apiFetch(handler) {
   return async (url, options) => {
     assert.equal(options.credentials, "same-origin");
+    assert.equal(options.mode, "same-origin");
+    assert.equal(options.cache, "no-store");
     assert.equal(options.headers["X-WB-Pulse"], "1");
     assert.match(url, /^api\/(cn|intl)\//);
     assert.equal(options.referrerPolicy, "no-referrer");

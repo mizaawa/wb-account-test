@@ -1,6 +1,8 @@
 /* Browser regressions use synthetic credentials only; no real upstream requests. */
 const assert = require('node:assert/strict');
-const { chromium } = require('playwright');
+const browserName = process.env.WB_TEST_BROWSER || 'chromium';
+const browserType = require('playwright')[browserName];
+if (!browserType) throw new Error('Unsupported test browser: ' + browserName);
 const { spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -26,15 +28,16 @@ async function assertWidth(page, width, label) {
 (async () => {
   await fs.mkdir(path.join(root, 'test-results'), { recursive: true });
   await waitFor(async () => { try { return (await fetch(base + '/healthz')).ok; } catch { return false; } }, 'server ready');
-  browser = await chromium.launch({ headless: true });
+  browser = await browserType.launch({ headless: true });
   for (const width of [320, 390, 430, 768, 1280]) {
-    const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: width < 768, hasTouch: width < 768, deviceScaleFactor: 1 });
+    const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: browserName !== 'firefox' && width < 768, hasTouch: width < 768, deviceScaleFactor: 1 });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
     let count = 0;
     await page.route('**/api/**', async route => {
-      count++;
       const req = route.request(), url = req.url();
+      if (url.endsWith('/api/status')) return route.continue();
+      count++;
       assert.ok(url.startsWith(base + '/api/')); assert.equal(req.headers()['x-wb-pulse'], '1');
       await delay(15);
       if (url.endsWith('/profile')) return route.fulfill({ json: { code: 0, data: { email: 'fixture@example.test' } } });
@@ -45,7 +48,12 @@ async function assertWidth(page, width, label) {
     if (width < 768) assert.ok(await page.locator('#credential-input').evaluate(el => parseFloat(getComputedStyle(el).fontSize) >= 16));
     // Slow just the browser's local reads so intermediate progress is observable.
     await page.evaluate(() => { const read = FileReader.prototype.readAsText; FileReader.prototype.readAsText = function(...args) { setTimeout(() => read.apply(this,args), 10); }; });
-    await page.locator('#file-input').setInputFiles(Array.from({length:42},(_,i) => fixtureFile(i, i === 0 ? 'long-'.repeat(40) + '.json' : undefined)));
+    const chosen = page.waitForEvent('filechooser');
+    await page.locator('#file-input').click();
+    const picker = await chosen;
+    assert.equal(picker.isMultiple(), true, 'native chooser must allow multiple files');
+    assert.equal(await page.locator('#file-input').getAttribute('accept'), null, 'do not hide mobile provider files with MIME filters');
+    await picker.setFiles(Array.from({length:42},(_,i) => fixtureFile(i, i === 0 ? 'long-'.repeat(40) + '.json' : undefined)));
     await page.waitForFunction(() => document.getElementById('upload-button').getAttribute('aria-busy') === 'true');
     assert.ok(await page.locator('#import-progress').isVisible());
     assert.ok(await page.locator('#check-button').isDisabled());
@@ -75,16 +83,76 @@ async function assertWidth(page, width, label) {
     await page.locator('#upload-button').evaluate(button => { button.click(); button.click(); });
     await delay(100); assert.equal(choosers,1);
     await page.locator('#file-input').dispatchEvent('cancel');
-    await page.locator('#upload-button').click();
+    await page.locator('#file-input').click();
     await delay(100); assert.equal(choosers,2);
     await page.locator('#file-input').dispatchEvent('cancel');
     console.log('PASS viewport/import/picker/results',width);
     await context.close();
   }
-  const context=await browser.newContext({ viewport:{width:390,height:844},isMobile:true,hasTouch:true });
+  // Native user chooser + real DataTransfer objects: every visible import surface.
+  for (const width of [390, 1280]) {
+    const context = await browser.newContext({ viewport:{width,height:844}, isMobile:browserName !== 'firefox' && width < 768, hasTouch:width < 768 });
+    const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
+    const requests = []; page.on('request', req => requests.push(req.url()));
+    await page.goto(base);
+    await page.evaluate(() => { const read = FileReader.prototype.readAsText; FileReader.prototype.readAsText = function(...args) { setTimeout(() => read.apply(this,args), 30); }; });
+    let expected = 0;
+    async function dropAt(selector, ids, itemsOnly = false) {
+      const transfer = await page.evaluateHandle(({ids,itemsOnly}) => {
+        const dt = new DataTransfer();
+        for (const id of ids) dt.items.add(new File([JSON.stringify({uid:'drop-'+id,accessToken:'synthetic-drop-'+id})], 'credential-'+id+'.json', {type:''}));
+        if (itemsOnly) Object.defineProperty(dt,'files',{value:[]});
+        return dt;
+      }, {ids,itemsOnly});
+      await page.locator(selector).dispatchEvent('dragenter', {dataTransfer:transfer});
+      await page.locator(selector).dispatchEvent('dragover', {dataTransfer:transfer});
+      await page.locator(selector).dispatchEvent('drop', {dataTransfer:transfer});
+      await transfer.dispose();
+    }
+    const surfaces = width < 768 ? ['#credential-input','#file-input','#import-workspace'] : ['.drop-copy','#file-input','#credential-input','#import-workspace'];
+    for (const [i,selector] of surfaces.entries()) {
+      await dropAt(selector,[i*2,i*2+1],i===2);
+      expected+=2;
+      await page.waitForFunction(n=>document.getElementById('credential-input').value.trim().split(/\r?\n/).length===n && !document.getElementById('upload-button').disabled,expected);
+      assert.match(await page.locator('#import-status').textContent(),/新增 2/);
+    }
+    await dropAt('#import-workspace',[100,101]);
+    await page.waitForFunction(()=>document.getElementById('upload-button').disabled);
+    await dropAt('#import-workspace',[102,103]);
+    expected+=4;
+    await page.waitForFunction(n=>document.getElementById('credential-input').value.trim().split(/\r?\n/).length===n && !document.getElementById('upload-button').disabled,expected);
+    assert.equal(await page.locator('#import-percent').textContent(),'100%');
+    await dropAt('#import-workspace',[100,101]);
+    await page.waitForFunction(()=>document.getElementById('import-status').textContent.includes('跳过 2'));
+    assert.equal((await page.locator('#credential-input').inputValue()).split(/\r?\n/).length,expected);
+    assert.ok(requests.every(url=>url.startsWith(base)), 'import must not upload files to any server');
+    assert.equal(requests.filter(url=>url.includes('/api/')).length,0,'import only reads locally');
+    await assertWidth(page,width,'multi-drop');
+    await page.screenshot({path:path.join(root,'test-results/import-'+browserName+'-'+width+'.png')});
+    console.log('PASS native multi-select/drop targets/queue/duplicates',browserName,width);
+    await context.close();
+  }
+  // Reject missing/mismatched backend before any credential-bearing request.
+  for (const broken of ['html','old-version']) {
+    const context=await browser.newContext(); const page=await context.newPage();
+    let credentialRequests=0;
+    await page.route('**/api/**',route=>{
+      if(route.request().url().endsWith('/api/status')) return broken==='html' ? route.fulfill({contentType:'text/html',body:'<html>wrong proxy</html>'}) : route.fulfill({json:{service:'wb-pulse',version:'1.1.0',relay:'same-origin'}});
+      credentialRequests++; return route.abort();
+    });
+    await page.goto(base);
+    await page.locator('#credential-input').fill('{"uid":"synthetic","accessToken":"synthetic"}');
+    await page.locator('#check-button').click();
+    await page.waitForFunction(()=>document.getElementById('stat-failed').textContent==='1');
+    assert.equal(credentialRequests,0);
+    assert.match(await page.locator('#results-body').textContent(),/检测服务|容器|反向代理/);
+    await context.close();
+  }
+  const context=await browser.newContext({ viewport:{width:390,height:844},isMobile:browserName !== 'firefox',hasTouch:true });
   const page=await context.newPage(); page.on('pageerror',e=>errors.push(e.message));
   let slow=false, failure=true;
   await page.route('**/api/**',async route=>{
+    if(route.request().url().endsWith('/api/status')) return route.continue();
     if(slow) await delay(200);
     const headers=route.request().headers(); const failing=failure && headers['authorization']==='Bearer synthetic-1';
     if(failing) return route.fulfill({status:401,json:{code:401}});

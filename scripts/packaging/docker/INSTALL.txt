@@ -1,0 +1,28 @@
+WB Pulse v@VERSION@ - Docker offline deployment (@ARCH@)
+
+Requires Docker Engine/Desktop with Linux containers and Compose v2.
+Application image is included; installation never pulls an image.
+Linux/macOS: sh install.sh
+Windows: powershell -ExecutionPolicy Bypass -File .\install.ps1
+Manual: docker load --input image.tar
+        docker compose -f docker-compose.yaml up -d --pull never
+
+Open http://localhost:8080 after the service is healthy.
+Stop: docker compose -f docker-compose.yaml down
+Logs: docker compose -f docker-compose.yaml logs --tail 100
+Health: docker compose -f docker-compose.yaml ps
+
+The included Compose publishes port 8080 on all host interfaces.
+For local-only use change the port mapping to 127.0.0.1:8080:8080.
+For remote access use a trusted HTTPS reverse proxy.
+Never expose the service as an unrestricted public credential checker.
+
+Files are parsed locally in your browser. During account checking,
+credentials transiently pass through this deployment server to fixed
+official API endpoints; this app does not persist credentials.
+The official APIs still require internet access for account checking.
+
+Upgrade: keep the old version bundle for rollback, stop its Compose
+project before starting this bundle to avoid a port 8080 collision.
+Rollback: stop this bundle, load and start the previous version bundle.
+No account data migration is required.

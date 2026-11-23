@@ -7,9 +7,9 @@
   <meta name="description" content="WB Pulse 是一款 WorkBuddy 账号测活工具。支持同源安全转发、8 线程并发，实时查看账号和额度。">
   <title>WB Pulse · 让每一次连接都清晰可见</title>
   <link rel="icon" href="icons/logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css">
-  <script src="api.js" defer></script>
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="style.css?v=1.1.1">
+  <script src="api.js?v=1.1.1" data-wb-api defer></script>
+  <script src="app.js?v=1.1.1" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -25,11 +25,12 @@
       <p class="hero-description">一键掌握账号状态，让效率自然发生。<br>批量检测、实时反馈，你的凭证始终由你掌控。</p>
       <div class="hero-features" aria-label="产品特点"><span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 3 3 7-7"/></svg>同源安全连接</span><i></i><span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2v4m0 8v4M2 10h4m8 0h4M4.3 4.3l2.8 2.8m5.8 5.8 2.8 2.8m0-11.6-2.8 2.8m-5.8 5.8-2.8 2.8"/></svg>8 线程并发</span><i></i><span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 15 4-12 4 12m-6.8-4h5.6"/></svg>额度一目了然</span></div>
     </section>
-    <section class="workspace" aria-labelledby="workspace-title">
+    <section id="import-workspace" class="workspace" aria-labelledby="workspace-title">
       <div class="workspace-top"><div><div class="step-label">01 <span></span> 导入账号凭证</div><h2 id="workspace-title">准备好开启检测了吗？</h2><p>粘贴 JSON 凭证，或直接拖入你的账号文件</p></div><button class="text-button" id="clear-button" type="button" title="清空输入和结果"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M8 2h4l1 3H7l1-3Zm-3 3 1 13h8l1-13M8.5 8v7m3-7v7"/></svg>清空</button></div>
       <div class="drop-zone" id="drop-zone"><label class="sr-only" for="credential-input">JSON 账号凭证，每行一个 JSON 对象</label><textarea id="credential-input" rows="8" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder='{"uid":"...","accessToken":"...","refreshToken":"...","realm":"cn"}&#10;每行一个 JSON 凭证，支持批量粘贴'></textarea><div class="input-bottom"><span class="line-count" id="line-count">0 行内容</span><span class="json-hint"><span></span>支持 JSON / JSONL</span></div></div>
       <p class="form-error" id="import-error" role="alert" hidden></p>
-      <div class="import-actions"><input type="file" id="file-input" accept=".json,.jsonl,.txt,application/json,text/plain" multiple hidden><button class="upload-button" id="upload-button" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 13V2m-4 4 4-4 4 4M3 12v5h14v-5"/></svg><span id="upload-label">导入凭证文件</span><span class="upload-note">可多选</span></button><span class="drop-copy"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 1v10m-4-3 4 4 4-4M2 12v4h14v-4"/></svg>或拖拽文件到这里</span><div class="realm-control"><label for="realm-select">账号版本</label><div class="select-wrap"><span class="realm-dot"></span><select id="realm-select" aria-label="默认账号版本"><option value="cn">国内版 CN</option><option value="intl">国际版 Global</option></select><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></div></div></div>
+      <div class="import-actions"><div class="file-picker"><input type="file" id="file-input" multiple aria-label="选择一个或多个凭证文件" aria-describedby="file-help"><button class="upload-button" id="upload-button" type="button" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 13V2m-4 4 4-4 4 4M3 12v5h14v-5"/></svg><span id="upload-label">导入凭证文件</span><span class="upload-note">可多选</span></button></div><span class="drop-copy"><svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 1v10m-4-3 4 4 4-4M2 12v4h14v-4"/></svg>或拖拽文件到这里</span><div class="realm-control"><label for="realm-select">账号版本</label><div class="select-wrap"><span class="realm-dot"></span><select id="realm-select" aria-label="默认账号版本"><option value="cn">国内版 CN</option><option value="intl">国际版 Global</option></select><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></div></div></div>
+      <p id="file-help" class="file-help">支持多个 JSON / JSONL / TXT 文件；电脑按 Ctrl / Shift 多选，手机在系统文件选择器中长按文件或点“选择”。也可分批添加，不会覆盖已导入凭证。</p>
       <div class="import-progress" id="import-progress" role="status" aria-live="polite" hidden><div class="progress-copy"><span id="import-status">准备导入…</span><strong id="import-percent">0%</strong></div><div class="progress-track" id="import-progress-track" role="progressbar" aria-label="文件导入进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="import-progress-fill"></div></div></div>
       <div class="file-chips" id="file-chips" aria-live="polite" hidden></div>
       <button class="check-button" id="check-button" type="button" disabled><span class="button-shine" aria-hidden="true"></span><svg class="bolt-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m13 2-8 12h6l-1 8 9-13h-6V2Z"/></svg><span id="check-label">开始测活</span></button>
@@ -48,7 +49,7 @@
     </section>
     <section class="privacy-card"><div class="privacy-icon"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M14 2 24 6v8c0 6-10 12-10 12S4 20 4 14V6l10-4Z"/><path d="M9 13V9m10 4V9m-7 0V7a2 2 0 0 1 4 0v2M8 12h12v9H8z"/></svg></div><div><h3>你的隐私，不只是一个承诺</h3><p>文件仅在浏览器解析。开始检测后，所需凭证会经本站服务器临时转发至固定的 WorkBuddy 官方接口；应用不记录或持久化凭证，请仅使用你信任的部署并启用 HTTPS。</p></div><span class="privacy-tag">NO STORAGE <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3 3 7-7"/></svg></span></section>
   </main>
-  <footer><span><strong>WB Pulse</strong><i>·</i>v1.1.0 · 轻量，且值得信赖</span><span>为效率而生，为隐私而设计 <span class="footer-spark">✦</span></span></footer>
+  <footer><span><strong>WB Pulse</strong><i>·</i>v1.1.1 · 轻量，且值得信赖</span><span>为效率而生，为隐私而设计 <span class="footer-spark">✦</span></span></footer>
   <div class="toast" id="toast" role="status" aria-live="polite"></div><noscript><div class="noscript">请启用 JavaScript 后使用本地测活功能。</div></noscript>
 </body>
 </html>

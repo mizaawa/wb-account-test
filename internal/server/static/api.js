@@ -5,6 +5,33 @@
   else root.WBApi = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
+  const VERSION = "1.1.1";
+  const apiScript = typeof document !== "undefined" ? document.currentScript || document.querySelector("script[data-wb-api]") : null;
+  const relayBase = apiScript?.src ? new URL("./", apiScript.src).href : null;
+  let relayReady = null;
+  function localURL(relative) {
+    if (!relayBase) return relative;
+    const target = new URL(relative, relayBase);
+    if (target.origin !== location.origin || !/^https?:$/.test(target.protocol)) throw new CheckError("检测服务必须与页面同源，请使用完整 Docker 服务而不是静态页面", "deployment");
+    return target.href;
+  }
+  async function ensureRelay(signal) {
+    if (!relayBase) return;
+    if (!relayReady) relayReady = (async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch(localURL("api/status"), { mode: "same-origin", credentials: "same-origin", cache: "no-store", redirect: "error", signal: controller.signal });
+        const status = response.ok ? await response.json() : null;
+        if (!status || status.service !== "wb-pulse" || status.relay !== "same-origin" || status.version !== VERSION) throw new CheckError("页面与检测服务版本不一致或 API 反代缺失，请更新容器、刷新页面并检查 api/ 转发（需要 v" + VERSION + "）", "deployment");
+      } catch (error) {
+        if (error instanceof CheckError) throw error;
+        throw new CheckError("无法验证本站检测服务，请检查容器、反向代理与网络后重试", "deployment");
+      } finally { clearTimeout(timeout); }
+    })().catch(error => { relayReady = null; throw error; });
+    await relayReady;
+    if (signal?.aborted) throw new CheckError("检测已取消", "cancelled");
+  }
   const REALMS = {
     cn: { web: "https://www.workbuddy.cn", api: "https://www.codebuddy.cn", domain: "copilot.tencent.com" },
     intl: { web: "https://www.workbuddy.ai", api: "https://www.workbuddy.ai", domain: "www.workbuddy.ai" },
@@ -76,7 +103,7 @@
       const routes = { profile: cfg.web + "/console/account", summary: cfg.api + SUMMARY,
         resource: cfg.api + RESOURCE, enterprise: cfg.api + ENTERPRISE,
         "enterprise-key": cfg.api + "/v2" + ENTERPRISE, refresh: cfg.web + "/v2/plugin/auth/token/refresh" };
-      for (const [action, upstream] of Object.entries(routes)) if (target.href === upstream) return "api/" + realm + "/" + action;
+      for (const [action, upstream] of Object.entries(routes)) if (target.href === upstream) return localURL("api/" + realm + "/" + action);
     }
     throw new CheckError("不支持的官方接口", "input");
   }
@@ -90,7 +117,7 @@
     if (signal) { if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true }); }
     try {
       let response;
-      try { response = await fetcher(relayURL(url), { ...options, headers: { ...options.headers, "X-WB-Pulse": "1" }, signal: controller.signal, credentials: "same-origin", redirect: "error", referrerPolicy: "no-referrer" }); }
+      try { response = await fetcher(relayURL(url), { ...options, headers: { ...options.headers, "X-WB-Pulse": "1" }, signal: controller.signal, mode: "same-origin", cache: "no-store", credentials: "same-origin", redirect: "error", referrerPolicy: "no-referrer" }); }
       catch (error) {
         if (signal && signal.aborted) throw new CheckError("检测已取消", "cancelled");
         if (controller.signal.aborted) throw new CheckError("请求超时，请稍后重试", "network");
@@ -157,6 +184,7 @@
     const account = Object.assign({}, rawAccount);
     const { signal, fetchImpl } = options;
     if (!REALMS[account.realm]) throw new CheckError("账号版本无效", "input");
+    if (!fetchImpl) await ensureRelay(signal);
     const key = isApiKey(account.accessToken);
     const enterprise = key || Boolean(account.enterpriseId || claims(account.accessToken).enterprise_id);
     let name = key ? "API Key · " + account.accessToken.split(".")[0].slice(0, 19) : "";
@@ -183,7 +211,7 @@
       try {
         const credits = summaryCredits(ensureCode(await authCall(() => request(REALMS[account.realm].api + SUMMARY, { method: "POST", headers: headers(account), body: "{}", signal }, fetchImpl))));
         if (credits.size > 0) return credits;
-      } catch (error) { if (error.kind === "auth" || error.kind === "cancelled") throw error; }
+      } catch (error) { if (["auth", "cancelled", "network", "deployment"].includes(error.kind)) throw error; }
       const data = ensureCode(await authCall(() => {
         const now = new Date();
         const stamp = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace("T", " ");
