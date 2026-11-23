@@ -36,7 +36,7 @@ docker compose down
 镜像地址默认为 `ghcr.io/mizaawa/wb-account-test:latest`。可用环境变量覆盖，例如固定发布版本：
 
 ```sh
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.1 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.2 docker compose up -d
 ```
 
 支持 `linux/amd64`、`linux/arm64`，无需持久卷或后端环境变量。如果仓库由 fork 托管，请将 Compose 默认镜像地址改成自己的 GitHub 用户名／仓库名。
@@ -64,9 +64,9 @@ WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.1 docker compose up -d
 
 浏览器 → 当前站点的 api/ → Docker 内 Go 服务 → 固定官方 HTTPS 接口。**纯网页直连时，本站无法替官方服务授予 CORS 权限**；不使用 no-cors、关闭浏览器安全限制或公共第三方代理。
 
-v1.1.1 在发送凭证前检查 api/status 的版本与 same-origin 能力；前端请求强制同源，按脚本所在部署目录解析路径。脚本带版本号，页面/脚本禁止缓存，防止继续运行旧版浏览器直连代码。
+v1.1.1 起在发送凭证前检查 api/status 的版本与 same-origin 能力；前端请求强制同源，按脚本所在部署目录解析路径。脚本带版本号，页面/脚本禁止缓存，防止继续运行旧版浏览器直连代码。
 
-若仍显示旧提示“网络连接失败或浏览器跨域拦截（CORS）”，先确认页脚是 v1.1.1，并查看本站 api/status 返回 version=1.1.1、relay=same-origin。此提示不在当前源码内，不能据此判定新容器的真实上游错误。执行 docker compose pull 后还必须重新创建容器，并刷新浏览器/清除反代或 CDN 的旧缓存。
+若仍显示旧提示“网络连接失败或浏览器跨域拦截（CORS）”，先确认页脚是 v1.1.2，并查看本站 api/status 返回 version=1.1.2、relay=same-origin。此提示不在当前源码内，不能据此判定新容器的真实上游错误。执行 docker compose pull 后还必须重新创建容器，并刷新浏览器/清除反代或 CDN 的旧缓存。
 
 **不带凭证的部署核对**：在手机正在使用的网址下打开 `api/status`（如页面在 `/pulse/`，则打开 `/pulse/api/status`），与直连容器返回的状态对照。也可以在 Windows 上运行下列命令；把示例域名和路径换成自己的，不要附带令牌、Cookie 或凭证文件。
 
@@ -118,10 +118,10 @@ location /pulse/ {
 
 ```sh
 # 升级（固定此次版本）
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.1 docker compose pull
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.1 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.2 docker compose pull
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.2 docker compose up -d
 # 回滚到上个版本
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.0 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.1 docker compose up -d
 ```
 
 ## 本地开发
@@ -155,13 +155,13 @@ Windows 开发机安装 Go、Node.js、Docker Desktop（Linux 容器）后，运
 推送版本标签即可自动发布：
 
 ```sh
-git tag v1.1.1
-git push origin v1.1.1
+git tag v1.1.2
+git push origin v1.1.2
 ```
 
-也可以在 Actions 页面手动运行 **Release** 并输入 `v1.1.1`。工作流在全部测试通过后构建并推送：
+也可以在 Actions 页面手动运行 **Release** 并输入 `v1.1.2`。工作流在全部测试通过后构建并推送：
 
-- `ghcr.io/<owner>/<repo>:1.1.1`
+- `ghcr.io/<owner>/<repo>:1.1.2`
 - `ghcr.io/<owner>/<repo>:1.1`
 - `ghcr.io/<owner>/<repo>:latest`
 

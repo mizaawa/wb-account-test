@@ -50,7 +50,7 @@ func TestHealthAndMethods(t *testing.T) {
 }
 
 func TestRelayVersionAndAssetCache(t *testing.T) {
-	for _, path := range []string{"/api/status", "/", "/api.js?v=1.1.1", "/app.js?v=1.1.1"} {
+	for _, path := range []string{"/api/status", "/", "/api.js?v=1.1.2", "/app.js?v=1.1.2"} {
 		w := httptest.NewRecorder()
 		New().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		if w.Code != http.StatusOK || w.Header().Get("X-WB-Pulse-Version") != Version || w.Header().Get("Cache-Control") != "no-store, max-age=0" {

@@ -44,7 +44,7 @@ async function ready(url){for(let i=0;i<100;i++){try{if((await fetch(url)).ok)re
   const page=await context.newPage();const requests=[],errors=[];
   page.on('request',req=>requests.push({url:req.url(),method:req.method()}));page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base);
-  const status=await (await context.request.get(base+'api/status')).json();assert.equal(status.version,'1.1.1');assert.equal(status.relay,'same-origin');
+  const status=await (await context.request.get(base+'api/status')).json();assert.equal(status.version,'1.1.2');assert.equal(status.relay,'same-origin');
   await page.locator('#credential-input').fill(JSON.stringify(['cn','intl'].map(realm=>({uid:'synthetic-e2e',accessToken:'synthetic-e2e-'+realm,realm}))));
   await page.locator('#check-button').click();
   await page.waitForFunction(()=>document.getElementById('check-label').textContent==='开始测活');

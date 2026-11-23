@@ -5,7 +5,7 @@
   else root.WBApi = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
-  const VERSION = "1.1.1";
+  const VERSION = "1.1.2";
   const apiScript = typeof document !== "undefined" ? document.currentScript || document.querySelector("script[data-wb-api]") : null;
   const relayBase = apiScript?.src ? new URL("./", apiScript.src).href : null;
   let relayReady = null;
