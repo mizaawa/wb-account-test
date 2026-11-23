@@ -31,6 +31,9 @@ func main() {
 		Addr:              addr,
 		Handler:           server.New(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       25 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 		IdleTimeout:       60 * time.Second,
 	}
 	done := make(chan os.Signal, 1)

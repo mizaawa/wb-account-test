@@ -26,6 +26,13 @@ jobs:
         run: go vet ./...
       - name: JavaScript tests
         run: node --test tests/*.test.js
+      - name: Browser regression tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          mkdir -p test-results
+          go build -o test-results/server-test ./cmd/server
+          npm run test:browser
       - name: Build
         run: go build -trimpath ./cmd/server
       - name: Compose configuration

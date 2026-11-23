@@ -1,4 +1,4 @@
-/* WB Pulse: browser-to-WorkBuddy API client. No application backend is used. */
+/* WB Pulse: same-origin API client. The deployment server relays fixed official endpoints. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
@@ -70,6 +70,16 @@
     }
     return result;
   }
+  function relayURL(url) {
+    const target = new URL(url);
+    for (const [realm, cfg] of Object.entries(REALMS)) {
+      const routes = { profile: cfg.web + "/console/account", summary: cfg.api + SUMMARY,
+        resource: cfg.api + RESOURCE, enterprise: cfg.api + ENTERPRISE,
+        "enterprise-key": cfg.api + "/v2" + ENTERPRISE, refresh: cfg.web + "/v2/plugin/auth/token/refresh" };
+      for (const [action, upstream] of Object.entries(routes)) if (target.href === upstream) return "api/" + realm + "/" + action;
+    }
+    throw new CheckError("不支持的官方接口", "input");
+  }
   async function request(url, options, fetchImpl) {
     const fetcher = fetchImpl || globalThis.fetch;
     if (typeof fetcher !== "function") throw new CheckError("当前浏览器不支持网络请求", "network");
@@ -80,15 +90,28 @@
     if (signal) { if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true }); }
     try {
       let response;
-      try { response = await fetcher(url, { ...options, signal: controller.signal, credentials: "omit", redirect: "error", referrerPolicy: "no-referrer" }); }
+      try { response = await fetcher(relayURL(url), { ...options, headers: { ...options.headers, "X-WB-Pulse": "1" }, signal: controller.signal, credentials: "same-origin", redirect: "error", referrerPolicy: "no-referrer" }); }
       catch (error) {
         if (signal && signal.aborted) throw new CheckError("检测已取消", "cancelled");
         if (controller.signal.aborted) throw new CheckError("请求超时，请稍后重试", "network");
-        throw new CheckError("网络连接失败或浏览器跨域拦截（CORS）", "network");
+        throw new CheckError("无法连接当前站点，请检查网络或服务器状态", "network");
       }
-      if (response.status === 401 || response.status === 403) throw new CheckError("登录凭证已失效", "auth");
-      if (!response.ok) throw new CheckError("官方接口返回 HTTP " + response.status, "upstream");
-      try { return await response.json(); } catch (_) { throw new CheckError("官方接口返回了无法识别的数据", "upstream"); }
+      if (!response.ok) {
+        let kind = [401, 403].includes(response.status) ? "auth" : "upstream";
+        let message = kind === "auth" ? "登录凭证已失效" : response.status === 404 ? "检测服务不存在，请更新部署服务器版本" : "官方接口返回 HTTP " + response.status;
+        try { const body = await response.json();
+          if (["network", "timeout", "busy", "redirect", "response", "origin"].includes(body.error)) {
+            kind = ["network", "timeout", "busy"].includes(body.error) ? "network" : "upstream";
+            message = String(body.message || message).slice(0, 160);
+          }
+        } catch (_) {}
+        throw new CheckError(message, kind);
+      }
+      try { return await response.json(); } catch (_) {
+        if (signal && signal.aborted) throw new CheckError("检测已取消", "cancelled");
+        if (controller.signal.aborted) throw new CheckError("请求超时，请稍后重试", "network");
+        throw new CheckError("官方接口返回了无法识别的数据", "upstream");
+      }
     } finally { clearTimeout(timer); if (signal) signal.removeEventListener("abort", abort); }
   }
   function ensureCode(payload) {
@@ -173,5 +196,5 @@
     const credits = values[values.length - 1];
     return { identity: name, used: credits.used, size: credits.size, remain: credits.remain ?? Math.max(0, credits.size - credits.used), realm: account.realm };
   }
-  return { REALMS, CheckError, parseCredentials, normalizeCredential, checkAccount, isApiKey, expired, packageTotals, summaryCredits };
+  return { REALMS, CheckError, parseCredentials, normalizeCredential, checkAccount, relayURL, isApiKey, expired, packageTotals, summaryCredits };
 });

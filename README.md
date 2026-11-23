@@ -1,10 +1,14 @@
 # WB Pulse · WorkBuddy 账号测活
 
-活力蓝、圆角、流体动效的纯前端 WorkBuddy 批量测活网站。Go 只负责内嵌静态页面与健康检查，**没有账号 API、数据库、日志或凭证代理**。
+活力蓝、圆角、流体动效的 WorkBuddy 批量测活网站。浏览器本地解析凭证文件，Go 提供静态页面、健康检查和**固定官方接口的同源转发**，解决官方接口未开放浏览器跨域访问时的检测失败。
+
+> **v1.1.0 隐私变化：**导入文件仍然只在浏览器解析；点击检测后，所需凭证会临时经过你部署的服务器，再发往官方接口。应用不记录、不持久化凭证，不接入第三方代理。请只使用可信部署、配置 HTTPS 和访问控制。
 
 ## 功能
 
 - JSONL 逐行粘贴、JSON 数组、多文件选择、桌面拖放导入。
+- 文件读取进度、当前文件名、成功/失败反馈、重复凭证去重；文件列表默认折叠。
+- 手机卡片式结果、16px 输入控件、无横向溢出；保留浏览器手势缩放。
 - 默认 8 个浏览器并发任务，实时表格、进度、耗时及成功／失败统计。
 - 获取手机号或邮箱、已用额度、总额度和使用百分比。
 - 全部／成功／失败胶囊筛选，单账号重试、随时停止。
@@ -32,7 +36,7 @@ docker compose down
 镜像地址默认为 `ghcr.io/mizaawa/wb-account-test:latest`。可用环境变量覆盖，例如固定发布版本：
 
 ```sh
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.0.0 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.0 docker compose up -d
 ```
 
 支持 `linux/amd64`、`linux/arm64`，无需持久卷或后端环境变量。如果仓库由 fork 托管，请将 Compose 默认镜像地址改成自己的 GitHub 用户名／仓库名。
@@ -60,38 +64,65 @@ WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.0.0 docker compose up -d
 
 国内版 Web 域名为 `www.workbuddy.cn`，计费域名为 `www.codebuddy.cn`；国际版均为 `www.workbuddy.ai`。
 
-**重要限制：**所有请求确实由浏览器直接发送，因此官方接口必须允许页面来源跨域。未登录探测时部分上游预检没有返回允许跨域的响应，浏览器可能报 CORS；本项目不会通过后端转发来绕过这个限制。页面会把这类情况明确显示为“网络连接失败或浏览器跨域拦截（CORS）”。这不影响 Docker 部署和页面本身运行，但实际测活需要上游 CORS 支持；本次本地验证使用模拟官方响应，未读取上游目录中的任何真实凭证。生产部署建议使用 HTTPS 和访问控制，不要把测活页面直接暴露到公网。
+### 同源转发与部署安全
+
+前端仅调用本站的相对路径 `api/{cn|intl}/{action}`，Go 将这些动作映射到上述固定官方接口。没有通用 URL 代理，不接受调用者提供目标主机、路径或查询参数，也不跟随重定向。请求仅转发白名单鉴权头；不向上游转发浏览器 Cookie，不把上游 Set-Cookie 返回浏览器。
+
+- 浏览器同源请求不依赖官方 CORS 响应；部署服务器仍需能通过 HTTPS 访问官方域名。
+- 服务不开放跨域访问，校验站点来源和专用请求头；最多 64 个在途请求，请求体上限 64 KiB，响应上限 2 MiB，上游超时 18 秒。
+- 文件单个最大 2 MiB，每批最多 100 个 / 20 MiB，累计最多 2000 个账号；导入期间禁用冲突操作。
+- 响应设置 `Cache-Control: no-store`；没有数据库、文件写入或凭证日志。反向代理也不应记录 Authorization、请求体和响应体。
+- 反向代理须保留原始 Host；支持 HTTPS 在反向代理终止。部署子路径时需把该前缀的页面和 `api/` 一并转发，使用带结尾斜杠的访问地址。
+- 公开部署请在反向代理配置访问控制与限流；同源限制不是登录认证，不应把本服务当公共代理。
+- 网络超时、上游 HTTP 错误和凭证失效分开显示，不把所有失败笼统归为 CORS。
+
+本地自动化验证只使用合成凭证与模拟响应，不读取截图中的令牌或任何真实账号文件。真实账号有效性仍取决于官方服务及部署网络。
+
+### 升级与回滚
+
+```sh
+# 升级（固定此次版本）
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.0 docker compose pull
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.1.0 docker compose up -d
+# 回滚到上个版本；会恢复旧的浏览器直连/CORS 限制
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:1.0.2 docker compose up -d
+```
 
 ## 本地开发
 
-要求 Go 1.23+ 和 Node.js 18+（前端无 npm 运行依赖）。
+要求 Go 1.23+ 和 Node.js 20+（前端无 npm 运行依赖）。
 
 ```sh
 go run ./cmd/server
 go test -race ./...
 go vet ./...
+npm ci
 node --test tests/*.test.js
+npx playwright install chromium
+# Windows 将输出路径改为 test-results/server-test.exe
+go build -o test-results/server-test ./cmd/server
+npm run test:browser
 docker build -t wb-pulse:local .
 WB_IMAGE=wb-pulse:local docker compose up -d
 ```
 
-纯静态源码位于 `internal/server/static/`，使用原生 JavaScript，无构建步骤。`go:embed` 将资源编译进二进制。
+前端源码位于 `internal/server/static/`，使用原生 JavaScript，无构建步骤。`go:embed` 将资源编译进二进制。
 
 ## GitHub 自动发布
 
-推送 `main` 或 Pull Request 会运行 CI：Go 格式检查、`go test -race`、`go vet`、JavaScript 测试、构建和 Compose 配置校验。
+推送 `main` 或 Pull Request 会运行 CI：Go 格式检查、`go test -race`、`go vet`、JavaScript 测试、Chromium 手机/桌面交互回归、构建和 Compose 配置校验。
 
 推送版本标签即可自动发布：
 
 ```sh
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
-也可以在 Actions 页面手动运行 **Release** 并输入 `v1.0.0`。工作流在全部测试通过后构建并推送：
+也可以在 Actions 页面手动运行 **Release** 并输入 `v1.1.0`。工作流在全部测试通过后构建并推送：
 
-- `ghcr.io/<owner>/<repo>:1.0.0`
-- `ghcr.io/<owner>/<repo>:1.0`
+- `ghcr.io/<owner>/<repo>:1.1.0`
+- `ghcr.io/<owner>/<repo>:1.1`
 - `ghcr.io/<owner>/<repo>:latest`
 
-然后创建 GitHub Release，附带 `docker-compose.yaml` 和 `README.md`。工作流只使用内置 `GITHUB_TOKEN`；首次发布后如拉取提示 denied，请在 GitHub **Packages → Package settings** 将包设为 Public，或配置 GHCR 登录。
+然后创建 GitHub Release，附带 `docker-compose.yaml`、`README.md` 和 `CHANGELOG.md`。工作流只使用内置 `GITHUB_TOKEN`；首次发布后如拉取提示 denied，请在 GitHub **Packages → Package settings** 将包设为 Public，或配置 GHCR 登录。

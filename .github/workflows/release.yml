@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.x'
@@ -25,6 +27,13 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: node --test tests/*.test.js
+      - name: Browser regression tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          mkdir -p test-results
+          go build -o test-results/server-test ./cmd/server
+          npm run test:browser
   release:
     needs: test
     runs-on: ubuntu-latest
@@ -33,6 +42,8 @@ jobs:
       IMAGE_NAME: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -40,17 +51,25 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED_VERSION:-$GITHUB_REF_NAME}"
+          [[ "$version" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] || { echo "Invalid version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "semver=${version#v}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/') }}
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
           labels: |
             org.opencontainers.image.title=WB Pulse
-            org.opencontainers.image.description=Browser-only WorkBuddy account checker
+            org.opencontainers.image.description=WorkBuddy checker with a fixed same-origin relay
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -61,13 +80,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - id: version
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Verify image manifest
+        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.version.outputs.semver }}
       - name: Create release with deployment files
         uses: softprops/action-gh-release@v2
         with:
@@ -77,7 +91,13 @@ jobs:
           files: |
             docker-compose.yaml
             README.md
+            CHANGELOG.md
           body: |
+            ## 修复与升级提醒
+            修复浏览器跨域请求失败、手机布局、文件选择重复触发和导入进度。
+            检测改为本站服务器向固定官方接口临时转发凭证，应用不存储凭证。请只使用可信部署。
+            详细变更见附件 `CHANGELOG.md`。
+
             ## 快速部署
             下载本 Release 的 `docker-compose.yaml`，然后运行：
             ```sh
@@ -85,5 +105,3 @@ jobs:
             ```
             镜像：`ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}`
             支持 linux/amd64 与 linux/arm64。
-      - name: Verify image manifest
-        run: docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}

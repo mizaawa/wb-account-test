@@ -5,3 +5,8 @@ Dockerfile
 docker-compose*.yaml
 tests
 *.exe
+
+node_modules
+test-results
+package*.json
+CHANGELOG.md
