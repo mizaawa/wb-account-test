@@ -52,7 +52,7 @@ func TestHealthStatusAndMethods(t *testing.T) {
 		want map[string]string
 	}{
 		{"/healthz", map[string]string{"status": "ok"}},
-		{"/api/status", map[string]string{"service": "wb-pulse", "version": "2.0.0", "relay": "same-origin"}},
+		{"/api/status", map[string]string{"service": "wb-pulse", "version": "2.0.1", "relay": "same-origin"}},
 	} {
 		w := httptest.NewRecorder()
 		New().ServeHTTP(w, httptest.NewRequest(http.MethodGet, tc.path, nil))

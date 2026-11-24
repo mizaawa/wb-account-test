@@ -1,5 +1,5 @@
 
-  const VERSION = "2.0.0";
+  const VERSION = "2.0.1";
   const relayBase = typeof document !== "undefined" ? document.baseURI : null;
   let relayReady = null;
   function localURL(relative) {

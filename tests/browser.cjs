@@ -24,7 +24,7 @@ async function ready() {
   const errors=[]; const apiCalls=[]; const direct=[];
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',req=>{if(/workbuddy\.(?:cn|ai)|codebuddy\.cn/.test(req.url()))direct.push(req.url());if(req.url().includes('/api/'))apiCalls.push(req.url())});
-  await page.route('**/api/status',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({service:'wb-pulse',version:'2.0.0',relay:'same-origin'})}));
+  await page.route('**/api/status',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({service:'wb-pulse',version:'2.0.1',relay:'same-origin'})}));
   await page.route('**/api/cn/**',route=>{
     const url=new URL(route.request().url());
     if(url.pathname.endsWith('/profile'))return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({code:0,data:{uid:'browser-fixture',email:'fixture@example.test'}})});
@@ -34,6 +34,33 @@ async function ready() {
   await page.goto(address,{waitUntil:'networkidle'});
   assert.match(await page.title(),/WB Pulse/);
   assert.match(await page.locator('h1').innerText(),/让每一份用量\s+一目了然。/);
+  const realmSelect=page.locator('#realm-select');
+  assert.equal(await realmSelect.inputValue(),'cn','Chinese WorkBuddy must remain the default realm');
+  const realmTheme=await realmSelect.evaluate(el=>({
+    color:getComputedStyle(el).color,
+    colorScheme:getComputedStyle(el).colorScheme,
+    selectedBackground:getComputedStyle(el.options[0]).backgroundColor,
+    selectedColor:getComputedStyle(el.options[0]).color,
+  }));
+  assert.equal(realmTheme.colorScheme,'light');
+  assert.equal(realmTheme.color,'rgb(37, 67, 106)');
+  assert.equal(realmTheme.selectedBackground,'rgb(22, 113, 249)');
+  assert.equal(realmTheme.selectedColor,'rgb(255, 255, 255)');
+  const disabledActions=await page.locator('.paste-button:disabled,.run-button:disabled').evaluateAll(els=>els.map(el=>({
+    opacity:getComputedStyle(el).opacity,
+    background:getComputedStyle(el).backgroundColor,
+    color:getComputedStyle(el).color,
+  })));
+  assert.equal(disabledActions.length,2);
+  for(const action of disabledActions){
+    assert.equal(action.opacity,'1','disabled actions should not be washed out with opacity');
+    assert.equal(action.background,'rgb(234, 242, 255)');
+    assert.equal(action.color,'rgb(82, 111, 150)');
+  }
+  await realmSelect.selectOption('intl');
+  assert.equal(await realmSelect.inputValue(),'intl');
+  await realmSelect.selectOption('cn');
+
   await page.locator('#credential-input').fill(JSON.stringify({uid:'browser-fixture',accessToken:'synthetic-browser-token',realm:'cn'}));
   await page.getByRole('button',{name:/解析并导入/}).click();
   await page.locator('.status-pending').waitFor();
