@@ -1,5 +1,5 @@
 
-  const VERSION = "2.0.2";
+  const VERSION = "2.0.3";
   const relayBase = typeof document !== "undefined" ? document.baseURI : null;
   let relayReady = null;
   function localURL(relative) {
@@ -216,25 +216,45 @@
     const credits = values[values.length - 1];
     return { identity: name, used: credits.used, size: credits.size, remain: credits.remain ?? Math.max(0, credits.size - credits.used), realm: account.realm };
   }
-  async function parseCredentialsAsync(text, fallbackRealm, onProgress = () => {}) {
+  function isInventoryDocument(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) &&
+      (Object.hasOwn(value, "accounts") || (typeof value.source === "string" && /^wb[\s_-]*proxy[\s_-]*center$/i.test(value.source.trim())));
+  }
+  function inventoryRow(raw, index, fallbackRealm) {
+    const at = "账号清单 accounts[" + index + "]";
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CheckError(at + " 必须是对象", "input");
+    const uid = typeof raw.uid === "string" ? raw.uid.trim() : Number.isSafeInteger(raw.uid) ? String(raw.uid) : "";
+    if (!uid) throw new CheckError(at + " 缺少有效的 uid", "input");
+    const ts = raw.expiresAt;
+    const ms = typeof ts === "number" && ts > 0 ? (ts < 1e11 ? ts * 1000 : ts) : NaN;
+    // An exported roster describes accounts; it is not the online verification queue.
+    return { uid, name: typeof raw.name === "string" ? raw.name.trim() : "", realm: credentialRealm(raw, fallbackRealm),
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : null,
+      expiresAt: Number.isFinite(new Date(ms).getTime()) ? ms : null };
+  }
+  async function parseImportAsync(text, fallbackRealm, onProgress = () => {}) {
     const trimmed = String(text || "").trim();
     if (!trimmed) throw new CheckError("请先粘贴或导入凭证", "input");
-    let objects;
-    try {
-      const value = JSON.parse(trimmed);
-      objects = Array.isArray(value) ? value : [value];
-      if (!objects.length) throw new CheckError("没有找到有效凭证", "input");
-      const accounts = [];
-      for (let i = 0; i < objects.length; i += 500) {
-        const end = Math.min(objects.length, i + 500);
-        accounts.push(...objects.slice(i, end).map(raw => normalizeCredential(raw, fallbackRealm)));
-        onProgress(end / objects.length);
-        if (end < objects.length) await new Promise(resolve => setTimeout(resolve, 0));
-      }
-      return accounts;
-    } catch (error) {
-      if (error instanceof CheckError) throw error;
+    let value;
+    try { value = JSON.parse(trimmed); }
+    catch (_) {
       if (trimmed.startsWith("[")) throw new CheckError("JSON 数组格式错误，请检查凭证文件", "input");
+    }
+    if (value !== undefined) {
+      const inventory = isInventoryDocument(value);
+      const objects = inventory ? value.accounts : Array.isArray(value) ? value : [value];
+      if (!Array.isArray(objects)) throw new CheckError("账号清单的 accounts 必须是数组", "input");
+      if (!objects.length) throw new CheckError(inventory ? "账号清单为空，没有可导入的记录" : "没有找到有效凭证", "input");
+      const rows = [];
+      for (let i = 0; i < objects.length; i++) {
+        rows.push(inventory ? inventoryRow(objects[i], i, fallbackRealm) : normalizeCredential(objects[i], fallbackRealm));
+        if ((i + 1) % 500 === 0 && i + 1 < objects.length) {
+          onProgress((i + 1) / objects.length);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+      onProgress(1);
+      return { kind: inventory ? "inventory" : "credentials", rows };
     }
     const accounts = [];
     let line = 0, offset = 0;
@@ -254,7 +274,12 @@
       if (offset < trimmed.length) await new Promise(resolve => setTimeout(resolve, 0));
     }
     if (!accounts.length) throw new CheckError("没有找到有效凭证", "input");
-    return accounts;
+    return { kind: "credentials", rows: accounts };
+  }
+  async function parseCredentialsAsync(text, fallbackRealm, onProgress) {
+    const result = await parseImportAsync(text, fallbackRealm, onProgress);
+    if (result.kind !== "credentials") throw new CheckError("账号清单不是在线凭证", "input");
+    return result.rows;
   }
 
-  export { REALMS, CheckError, parseCredentials, parseCredentialsAsync, normalizeCredential, checkAccount, relayURL, isApiKey, expired, packageTotals, summaryCredits };
+  export { REALMS, CheckError, parseImportAsync, parseCredentials, parseCredentialsAsync, normalizeCredential, checkAccount, relayURL, isApiKey, expired, packageTotals, summaryCredits };

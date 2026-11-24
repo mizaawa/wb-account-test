@@ -1,7 +1,8 @@
 import { computed, reactive, shallowRef, triggerRef } from 'vue'
-import { CheckError, checkAccount, parseCredentialsAsync } from './api.js'
+import { CheckError, checkAccount, parseImportAsync } from './api.js'
 
 const accounts = shallowRef([])
+const inventoryRows = shallowRef([])
 const index = shallowRef({ all: [], success: [], failed: [], pending: [], testing: [], cancelled: [] })
 const positions = Object.fromEntries(Object.keys(index.value).map(key => [key, new Map()]))
 const counters = reactive({ success: 0, failed: 0, pending: 0, testing: 0, cancelled: 0 })
@@ -101,6 +102,7 @@ function setFilter(key) { activeFilter.value = key; currentPage.value = 1 }
 function clearAll() {
   if (running.value || importing.value || importQueue.length) return
   accounts.value = []
+  inventoryRows.value = []
   index.value = { all: [], success: [], failed: [], pending: [], testing: [], cancelled: [] }
   for (const values of Object.values(positions)) values.clear()
   for (const key of Object.keys(counters)) counters[key] = 0
@@ -133,10 +135,18 @@ function readFile(file, onProgress) {
 }
 async function ingestText(text, label) {
   if (!text.trim()) throw new CheckError('请选择凭证文件，或先粘贴 JSON / JSONL 凭证', 'input')
-  const credentials = await parseCredentialsAsync(text, realm.value, fraction => {
+  const imported = await parseImportAsync(text, realm.value, fraction => {
     updateImport(35 + fraction * 55, `${label} · 正在解析凭证`, 'parse')
   })
-  const result = addCredentials(credentials)
+  if (imported.kind === 'inventory') {
+    const key = row => JSON.stringify([row.realm, row.uid])
+    const merged = new Map(inventoryRows.value.map(row => [key(row), row]))
+    for (const row of imported.rows) merged.set(key(row), row)
+    inventoryRows.value = Array.from(merged.values())
+    toast(`已读取 ${imported.rows.length.toLocaleString()} 条清单记录，合并后共 ${merged.size.toLocaleString()} 条`)
+    return
+  }
+  const result = addCredentials(imported.rows)
   if (!result.added && result.duplicates) toast(`跳过 ${result.duplicates.toLocaleString()} 个已导入的重复账号`)
   else if (result.duplicates) toast(`已添加 ${result.added.toLocaleString()} 个账号，跳过 ${result.duplicates.toLocaleString()} 个重复项`)
   else toast(`已导入 ${result.added.toLocaleString()} 个账号`)
@@ -149,6 +159,7 @@ async function processFiles(files) {
     return
   }
   importingQueue = true
+  notice.value = ''
   importQueue.push(...files)
   importing.value = true
   let processed = 0
@@ -273,4 +284,4 @@ function maskedUid(record) {
 function statusLabel(status) {
   return ({ pending: '待检测', testing: '验证中', success: '正常', failed: '需检查', cancelled: '已停止' })[status] || status
 }
-export { activeFilter, accountCount, clearAll, completedCount, counters, currentPage, errorMessage, fileInput, filterCount, filters, identity, importPasted, importProgress, importing, maskedUid, meterPercent, nextPage, notice, number, onDrop, onFiles, pageSize, previousPage, realm, retry, retryFailed, runPercent, running, setFilter, startCheck, stopCheck, totalPages, toastText, visibleAccounts, inputText, statusLabel }
+export { activeFilter, accountCount, inventoryRows, clearAll, completedCount, counters, currentPage, errorMessage, fileInput, filterCount, filters, identity, importPasted, importProgress, importing, maskedUid, meterPercent, nextPage, notice, number, onDrop, onFiles, pageSize, previousPage, realm, retry, retryFailed, runPercent, running, setFilter, startCheck, stopCheck, totalPages, toastText, visibleAccounts, inputText, statusLabel }

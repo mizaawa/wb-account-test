@@ -4,6 +4,7 @@ const { chromium, webkit } = require('playwright');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const { checkRealmSelect } = require('./realm-select.cjs');
+const { checkInventory } = require('./inventory-browser.cjs');
 const root = path.resolve(__dirname, '..');
 const browserName = process.env.WB_TEST_BROWSER === 'webkit' ? 'webkit' : 'chromium';
 const type = browserName === 'webkit' ? webkit : chromium;
@@ -50,17 +51,16 @@ async function ready() {
     assert.equal(action.color,'rgb(82, 111, 150)');
   }
 
-  await page.locator('#credential-input').fill(JSON.stringify({uid:'browser-fixture',accessToken:'synthetic-browser-token'}));
-  await page.getByRole('button',{name:/解析并导入/}).click();
-  await page.locator('.status-pending').waitFor();
+  await checkInventory(page, apiCalls);
   assert.match(await page.locator('.identity-copy').innerText(),/browser-fixture/);
-  await page.getByRole('button',{name:/验证全部账号/}).click();
+  await page.getByRole('button',{name:/验证在线凭证/}).click();
   try { assert.ok(await realmSelect.isDisabled(), 'realm must stay locked while checking'); }
   finally { finishMock(); }
   await page.locator('.status-success').waitFor({timeout:10000});
   assert.ok(await realmSelect.isEnabled());
   assert.match(await page.locator('.quota-cell').innerText(),/75/);
   assert.ok(apiCalls.some(url=>url.endsWith('/api/status')));
+  assert.equal(apiCalls.filter(url=>url.endsWith('/profile')).length,1, 'must not check inventory entries');
   assert.ok(apiCalls.some(url=>url.endsWith('/api/intl/profile')));
   assert.ok(apiCalls.some(url=>url.endsWith('/api/intl/summary')));
   assert.equal(direct.length,0,'browser must send account requests only to the same-origin Go API');
@@ -75,14 +75,17 @@ async function ready() {
   await page.locator('.import-progress').waitFor({state:'visible',timeout:5000});
   assert.equal(await page.locator('.import-progress').getAttribute('role'),'status');
   assert.match(await page.locator('.import-progress-copy strong').innerText(),/%/);
-  await page.waitForFunction(()=>document.querySelector('.stat-card>strong')?.textContent?.replaceAll(',','')==='2507',null,{timeout:20000});
-  assert.match(await page.locator('.stat-card>strong').first().innerText(),/2,507/);
+  await page.waitForFunction(()=>document.querySelector('.stat-card>strong')?.textContent?.replaceAll(',','')==='2510',null,{timeout:20000});
+  assert.match(await page.locator('.stat-card>strong').first().innerText(),/2,510/);
   assert.match(await page.locator('.pagination').innerText(),/80 个账号/);
   await page.getByRole('button',{name:'下一页'}).click();
   assert.match(await page.locator('.pagination').innerText(),/第 2 \/ /);
   assert.ok(errors.length===0,errors.join('\n'));
   const widths=await page.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}));
   assert.ok(widths.scroll<=widths.client+1,`horizontal overflow at ${JSON.stringify(widths)}`);
-  console.log(`${browserName}: Vue UI, >2k unlimited import, pagination, mock WorkBuddy check through same-origin Go API, no browser CORS, no mobile overflow — passed`);
+  await page.getByRole('button',{name:'清空', exact:true}).click();
+  assert.equal(await page.locator('.inventory').count(),0);
+  assert.equal(await page.locator('.stat-card>strong').first().innerText(),'0');
+  console.log(`${browserName}: roster imports, Vue UI, >2k unlimited import, pagination, mock WorkBuddy check through same-origin Go API, no browser CORS, no mobile overflow — passed`);
  } finally { if(browser) await browser.close(); if(server){server.kill();await wait(150);} }
 })().catch(error=>{console.error(error);process.exitCode=1});

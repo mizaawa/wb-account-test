@@ -27,6 +27,8 @@
 
 也接受 `access_token` / `refresh_token` 字段及常见 `account`、`profile`、`user`、`auth`、`tokens`、`credentials` 包装格式。`realm` 可为 `cn` 或 `intl`；缺省时采用页面的默认选择。
 
+**WBProxyCenter 导出清单**：直接拖入或粘贴带顶层 `accounts` 数组的完整 JSON，无需改名或删除外层。可以与 `account` + `auth` 单账号文件一并选择。清单在独立的「WBProxyCenter 本地清单」中分页显示，按地区和 UID 合并，重复导入时使用后导入的记录。仅展示导出时的名称、UID、地区、启用状态及到期时间；清单令牌不会保留或发往在线验证接口，启用状态不是实时验证结果。
+
 **不要将真实令牌提交到 Git 仓库、公开日志或不可信服务器。**应用不保存令牌；刷新页面即可清除页面内存中的导入数据。
 
 ## 启动和部署
@@ -46,7 +48,7 @@ docker compose logs -f wb-pulse
 docker compose down
 ```
 
-发布镜像为 `ghcr.io/mizaawa/wb-account-test:2.0.2`。将公网部署放在受控的 HTTPS 反向代理之后，设置访问认证和限流；不要开放成任意访问的公共凭证检测服务。反代必须将页面、构建资源及 `/api/` 转发到同一 Go 服务。使用 `/pulse/` 等子路径时须保留尾部斜杠，并一并转发该子路径。
+发布镜像为 `ghcr.io/mizaawa/wb-account-test:2.0.3`。将公网部署放在受控的 HTTPS 反向代理之后，设置访问认证和限流；不要开放成任意访问的公共凭证检测服务。反代必须将页面、构建资源及 `/api/` 转发到同一 Go 服务。使用 `/pulse/` 等子路径时须保留尾部斜杠，并一并转发该子路径。
 
 ### CORS 与请求链路
 
@@ -91,16 +93,16 @@ npm run test:browser
 将 `WB_IMAGE` 固定到所需标签后升级；保留上一个标签可随时回滚：
 
 ```sh
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.2 docker compose pull
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.2 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.3 docker compose pull
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.3 docker compose up -d
 # 回滚到仍保留的旧版，例如：
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.1 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.2 docker compose up -d
 ```
 
 ## 本地离线安装包
 
-先执行 `npm ci`，再运行 `node scripts/build-release.cjs`。脚本会先重新构建 Vue，再交叉编译 Windows／Linux amd64／arm64 服务端包，并使用本机 Docker Buildx 构建双架构离线镜像。该操作只在 `test-results/release-v2.0.2/` 生成本地安装包；不会推送代码或发布 GitHub Release。
+先执行 `npm ci`，再运行 `node scripts/build-release.cjs`。脚本会先重新构建 Vue，再交叉编译 Windows／Linux amd64／arm64 服务端包，并使用本机 Docker Buildx 构建双架构离线镜像。该操作只在 `test-results/release-v2.0.3/` 生成本地安装包；不会推送代码或发布 GitHub Release。
 
 ## GitHub 发布
 
-推送 `v2.0.2` 标签后，GitHub Actions 会重新构建前端、运行 Go／Node／浏览器测试，随后构建多架构 Docker 镜像并创建 GitHub Release。需要具备仓库推送权限及 Actions `contents: write` / `packages: write` 权限。
+推送 `v2.0.3` 标签后，GitHub Actions 会重新构建前端、运行 Go／Node／浏览器测试，随后构建多架构 Docker 镜像并创建 GitHub Release。需要具备仓库推送权限及 Actions `contents: write` / `packages: write` 权限。
