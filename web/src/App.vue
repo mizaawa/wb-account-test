@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import RealmSelect from './RealmSelect.vue'
 import {
   accountCount, activeFilter, clearAll, counters, currentPage, errorMessage, fileInput,
   filterCount, filters, identity, importPasted, importProgress, importing, inputText,
@@ -30,7 +31,7 @@ function handleRun() { if (running.value) stopCheck(); else void startCheck() }
       <section class="workspace-grid">
         <article class="panel import-panel" @dragover.prevent @drop="onDrop">
           <div class="panel-title-row"><div><span class="section-kicker">01 / 导入账号</span><h2>添加你的凭证</h2></div><span class="free-badge"><i>∞</i> 无数量上限</span></div>
-          <div class="realm-row"><label class="field-label" for="realm-select">默认账号版本</label><div class="realm-select-wrap"><span class="realm-indicator"></span><select id="realm-select" v-model="realm" :disabled="importing || running"><option value="cn">中国版 · WorkBuddy</option><option value="intl">国际版 · WorkBuddy</option></select></div></div>
+          <RealmSelect v-model="realm" :disabled="importing || running" />
           <label class="field-label paste-label" for="credential-input">粘贴 JSON / JSONL 凭证</label><textarea id="credential-input" v-model="inputText" :disabled="importing || running" spellcheck="false" autocomplete="off" placeholder='{"uid":"…","accessToken":"…","refreshToken":"…","realm":"cn"}&#10;支持 JSON、JSONL，每行一个账号；新凭证会合并到列表中。'></textarea>
           <button class="paste-button" type="button" :disabled="!inputText.trim() || importing || running" @click="importPasted"><span>＋</span> 解析并导入</button>
           <div class="divider"><span>或者上传凭证文件</span></div>
