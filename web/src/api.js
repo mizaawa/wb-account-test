@@ -1,5 +1,5 @@
 
-  const VERSION = "2.0.3";
+  const VERSION = "2.0.4";
   const relayBase = typeof document !== "undefined" ? document.baseURI : null;
   let relayReady = null;
   function localURL(relative) {
@@ -26,8 +26,8 @@
     if (signal?.aborted) throw new CheckError("检测已取消", "cancelled");
   }
   const REALMS = {
-    cn: { web: "https://www.workbuddy.cn", api: "https://www.codebuddy.cn", domain: "copilot.tencent.com" },
-    intl: { web: "https://www.workbuddy.ai", api: "https://www.workbuddy.ai", domain: "www.workbuddy.ai" },
+    cn: { refresh: "https://copilot.tencent.com", web: "https://www.workbuddy.cn", api: "https://www.codebuddy.cn", domain: "copilot.tencent.com" },
+    intl: { refresh: "https://www.workbuddy.ai", web: "https://www.workbuddy.ai", api: "https://www.workbuddy.ai", domain: "www.workbuddy.ai" },
   };
   const SUMMARY = "/billing/meter/get-user-resource-summary";
   const RESOURCE = "/v2/billing/meter/get-user-resource";
@@ -51,26 +51,60 @@
     const realm = String(raw.realm || raw.region || fallback || "cn").toLowerCase();
     return realm === "intl" || realm === "global" ? "intl" : "cn";
   }
+  function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
+  function layers(raw) {
+    return [raw, raw?.auth, raw?.auth_raw, raw?.tokens, raw?.tokenData, raw?.credentials,
+      raw?.account, raw?.profile, raw?.profile_raw, raw?.user, raw?.userInfo, raw?.data].filter(object);
+  }
+  function pick(raw, ...keys) {
+    for (const layer of layers(raw)) for (const key of keys) {
+      const value = layer[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    }
+    return "";
+  }
+  function hasToken(raw) {
+    return layers(raw).some(layer => ["accessToken", "access_token", "token"].some(key =>
+      layer[key] !== undefined && layer[key] !== null && layer[key] !== ""));
+  }
+  function realmEvidence(value) {
+    let host;
+    try { host = new URL(String(value).includes("://") ? value : "https://" + value).hostname.toLowerCase(); }
+    catch (_) { return ""; }
+    for (const [realm, domains] of Object.entries({cn: ["copilot.tencent.com", "codebuddy.cn", "workbuddy.cn"], intl: ["workbuddy.ai", "codebuddy.ai"]})) {
+      if (domains.some(domain => host === domain || host.endsWith("." + domain))) return realm;
+    }
+    return "";
+  }
+  function epoch(value) { const n = Number(value); return Number.isFinite(n) && n > 0 ? (n > 1e11 ? n / 1000 : n) : 0; }
   function normalizeCredential(raw, fallbackRealm) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new CheckError("凭证必须是 JSON 对象", "input");
-    // Exporters commonly wrap tokens in auth/tokens/credentials and identity in
-    // account/profile/user. Prefer the token container, then merge its parents
-    // for realm/domain without overriding explicitly supplied fields.
-    const auth = [raw.auth, raw.tokens, raw.tokenData, raw.credentials, raw.data].find(value => value && typeof value === "object" && !Array.isArray(value) && (value.accessToken || value.access_token || value.token)) || raw;
-    const profile = [raw.account, raw.profile, raw.user, raw.userInfo, raw.data].find(value => value && typeof value === "object" && !Array.isArray(value)) || {};
-    const token = String(auth.accessToken || auth.access_token || auth.token || raw.accessToken || raw.access_token || raw.token || "").trim();
+    if (!object(raw)) throw new CheckError("凭证必须是 JSON 对象", "input");
+    const token = pick(raw, "accessToken", "access_token", "token");
     if (!token) throw new CheckError("未找到 accessToken 或 access_token", "input");
-    return { uid: String(profile.uid || profile.userId || profile.user_id || raw.uid || raw.userId || raw.user_id || ""), accessToken: token,
-      refreshToken: String(auth.refreshToken || auth.refresh_token || raw.refreshToken || raw.refresh_token || ""), realm: credentialRealm({ ...raw, ...auth }, fallbackRealm),
-      domain: String(auth.domain || raw.domain || ""), enterpriseId: String(profile.enterpriseId || profile.enterprise_id || auth.enterpriseId || auth.enterprise_id || raw.enterpriseId || raw.enterprise_id || ""),
-      nickname: String(profile.nickname || profile.name || raw.nickname || raw.name || "") };
+    const decoded = claims(token);
+    const domain = pick(raw, "domain") || (object(raw.profile_raw?.sso) ? pick(raw.profile_raw.sso, "domain") : "");
+    const realm = isApiKey(token) ? "cn" : realmEvidence(decoded.iss) || realmEvidence(domain) ||
+      credentialRealm({realm: pick(raw, "realm", "region")}, fallbackRealm);
+    const result = {
+      uid: pick(raw, "uid", "userId", "user_id") || String(decoded.sub || ""), accessToken: token,
+      refreshToken: pick(raw, "refreshToken", "refresh_token"), realm,
+      domain: domain && realmEvidence(domain) && realmEvidence(domain) !== realm ? REALMS[realm].domain : domain,
+      enterpriseId: pick(raw, "enterpriseId", "enterprise_id") || String(decoded.enterprise_id || ""),
+      nickname: pick(raw, "nickname", "name", "email"),
+    };
+    const expiresAt = epoch(decoded.exp) || epoch(pick(raw, "expiresAt", "expires_at"));
+    if (expiresAt) result.expiresAt = expiresAt;
+    return result;
   }
   function parseCredentials(text, fallbackRealm) {
     const trimmed = String(text || "").trim();
     if (!trimmed) throw new CheckError("请先粘贴或导入凭证", "input");
-    let objects;
-    try { const value = JSON.parse(trimmed); objects = Array.isArray(value) ? value : [value]; }
-    catch (_) { objects = trimmed.split(/\r?\n/).filter(line => line.trim()).map((line, index) => { try { return JSON.parse(line); } catch (_) { throw new CheckError("第 " + (index + 1) + " 行不是有效 JSON", "input"); } }); }
+    let value;
+    try { value = JSON.parse(trimmed); }
+    catch (_) { value = trimmed.split(/\r?\n/).filter(line => line.trim()).map((line, index) => { try { return JSON.parse(line); } catch (_) { throw new CheckError("第 " + (index + 1) + " 行不是有效 JSON", "input"); } }); }
+    const objects = isInventoryDocument(value) ? value.accounts : Array.isArray(value) ? value : [value];
+    if (!Array.isArray(objects)) throw new CheckError("账号清单的 accounts 必须是数组", "input");
     if (!objects.length) throw new CheckError("没有找到有效凭证", "input");
     return objects.map(raw => normalizeCredential(raw, fallbackRealm));
   }
@@ -80,7 +114,7 @@
       Authorization: "Bearer " + account.accessToken, "X-Requested-With": "XMLHttpRequest", "X-Client-Platform": "web",
       "X-User-Id": account.uid, "X-Domain": account.domain || cfg.domain, "X-CodeBuddy-Request": "1",
       "Accept-Language": account.realm === "intl" ? "en-US" : "zh-CN" };
-    if (account.enterpriseId) result["X-Enterprise-Id"] = account.enterpriseId;
+    if (account.enterpriseId) { result["X-Enterprise-Id"] = account.enterpriseId; result["X-Tenant-Id"] = account.enterpriseId; }
     else result["X-No-Enterprise-Id"] = "1";
     if (account.realm === "cn") result["X-Product"] = "SaaS";
     if (isApiKey(account.accessToken)) result["X-API-Key"] = account.accessToken;
@@ -94,7 +128,7 @@
     for (const [realm, cfg] of Object.entries(REALMS)) {
       const routes = { profile: cfg.web + "/console/account", summary: cfg.api + SUMMARY,
         resource: cfg.api + RESOURCE, enterprise: cfg.api + ENTERPRISE,
-        "enterprise-key": cfg.api + "/v2" + ENTERPRISE, refresh: cfg.web + "/v2/plugin/auth/token/refresh" };
+        "enterprise-key": cfg.api + "/v2" + ENTERPRISE, refresh: cfg.refresh + "/v2/plugin/auth/token/refresh" };
       for (const [action, upstream] of Object.entries(routes)) if (target.href === upstream) return localURL("api/" + realm + "/" + action);
     }
     throw new CheckError("不支持的官方接口", "input");
@@ -135,7 +169,7 @@
   }
   function ensureCode(payload) {
     if (!payload || typeof payload !== "object") throw new CheckError("接口响应格式错误", "upstream");
-    if (payload.code !== undefined && Number(payload.code) !== 0) throw new CheckError("官方接口拒绝请求（code " + String(payload.code).slice(0, 20) + "）", Number(payload.code) === 401 ? "auth" : "upstream");
+    if (payload.code !== undefined && Number(payload.code) !== 0) throw new CheckError("官方接口拒绝请求（code " + String(payload.code).slice(0, 20) + "）", [401, 403].includes(Number(payload.code)) ? "auth" : "upstream");
     return payload.data && typeof payload.data === "object" ? payload.data : payload;
   }
   function number(value) { const n = Number(value); return Number.isFinite(n) ? Math.max(0, n) : 0; }
@@ -150,12 +184,17 @@
     return { used, size, remain: Math.max(0, size - used) };
   }
   function summaryCredits(data) {
-    let used = 0, size = 0;
-    for (const item of data.Packages || []) { used += number(item.CycleUsedCapacity); size += number(item.CycleTotalCapacity); }
-    return { used, size, remain: Math.max(0, size - used) };
+    if (!Array.isArray(data.Packages)) throw new CheckError("额度摘要响应缺少套餐列表", "upstream");
+    let used = 0, size = 0, remain = 0;
+    for (const item of data.Packages) {
+      used += number(item.CycleUsedCapacity); size += number(item.CycleTotalCapacity);
+      remain += item.CycleRemainCapacity == null ? Math.max(0, number(item.CycleTotalCapacity) - number(item.CycleUsedCapacity)) : number(item.CycleRemainCapacity);
+    }
+    return { used, size, remain };
   }
   function identity(payload, account) {
     const data = payload.data && typeof payload.data === "object" ? payload.data : payload;
+    if (!["uid", "phoneNumber", "phone", "mobile", "email", "mail", "nickname"].some(key => data[key])) throw new CheckError("账号资料响应缺少身份信息", "upstream");
     const uid = String(data.uid || "");
     if (uid && account.uid && uid !== account.uid) throw new CheckError("账号 UID 与凭证不匹配", "upstream");
     return String(data.phoneNumber || data.phone || data.mobile || data.email || data.mail || data.nickname || account.nickname || uid || account.uid || "账号已验证");
@@ -163,14 +202,16 @@
   async function refresh(account, signal, fetchImpl) {
     if (!account.refreshToken || isApiKey(account.accessToken)) throw new CheckError("登录已过期，请重新获取凭证", "auth");
     const cfg = REALMS[account.realm];
-    const payload = await request(cfg.web + "/v2/plugin/auth/token/refresh", { method: "POST", body: "{}", signal,
+    const payload = await request(cfg.refresh + "/v2/plugin/auth/token/refresh", { method: "POST", body: "{}", signal,
       headers: headers(account, { "X-Refresh-Token": account.refreshToken, "X-Auth-Refresh-Source": account.realm === "cn" ? "workbuddy" : "plugin" }),
     }, fetchImpl);
-    let data = payload.data || {};
-    if (data.data) data = data.data;
-    if (!data.accessToken) throw new CheckError("刷新令牌失败，请重新获取凭证", "auth");
-    account.accessToken = String(data.accessToken);
-    if (data.refreshToken) account.refreshToken = String(data.refreshToken);
+    let data = ensureCode(payload);
+    if (object(data.data)) data = ensureCode(data);
+    if (typeof data.accessToken !== "string" || !data.accessToken.trim()) throw new CheckError("刷新令牌失败，请重新获取凭证", "auth");
+    account.accessToken = data.accessToken;
+    if (typeof data.refreshToken === "string" && data.refreshToken) account.refreshToken = data.refreshToken;
+    account.expiresAt = epoch(claims(data.accessToken).exp) || epoch(data.expiresAt) ||
+      (number(data.expiresIn) ? Date.now() / 1000 + number(data.expiresIn) : 0);
   }
   async function checkAccount(rawAccount, options = {}) {
     const account = Object.assign({}, rawAccount);
@@ -178,42 +219,54 @@
     if (!REALMS[account.realm]) throw new CheckError("账号版本无效", "input");
     if (!fetchImpl) await ensureRelay(signal);
     const key = isApiKey(account.accessToken);
-    const enterprise = key || Boolean(account.enterpriseId || claims(account.accessToken).enterprise_id);
-    let name = key ? "API Key · " + account.accessToken.split(".")[0].slice(0, 19) : "";
-    let refreshPromise = null;
+    let name = key ? "API Key" + (account.accessToken.includes(".") ? " · " + account.accessToken.split(".")[0].slice(0, 19) : "") : "";
+    let refreshed = false;
     async function refreshOnce() {
-      if (!refreshPromise) refreshPromise = refresh(account, signal, fetchImpl).finally(() => { refreshPromise = null; });
-      return refreshPromise;
+      if (refreshed) throw new CheckError("刷新后的凭证仍不可用，请重新登录", "auth");
+      refreshed = true;
+      await refresh(account, signal, fetchImpl);
+      // Retain rotated credentials only in the existing page-memory record, including
+      // when the subsequent quota call fails. Never reuse an already consumed token.
+      rawAccount.accessToken = account.accessToken;
+      rawAccount.refreshToken = account.refreshToken;
+      rawAccount.expiresAt = account.expiresAt;
     }
-    const authCall = fn => (async () => {
-      if (expired(account.accessToken)) await refreshOnce();
-      try { return await fn(); } catch (error) {
-        if (error.kind !== "auth" || !account.refreshToken) throw error;
-        await refreshOnce(); return fn();
+    async function authCall(fn) {
+      if (signal?.aborted) throw new CheckError("检测已取消", "cancelled");
+      if (!key && !refreshed && (expired(account.accessToken) || (account.expiresAt > 0 && account.expiresAt * 1000 <= Date.now() + 30000))) await refreshOnce();
+      try { return ensureCode(await fn()); }
+      catch (error) {
+        if (error.kind !== "auth" || !account.refreshToken || key || refreshed) throw error;
+        await refreshOnce();
+        return ensureCode(await fn());
       }
-    })();
-    const profilePromise = key ? null : authCall(() => request(REALMS[account.realm].web + "/console/account", { headers: headers(account, { "Content-Type": undefined }), signal }, fetchImpl)).then(payload => { name = identity(ensureCode(payload), account); });
-    const creditsPromise = (async () => {
-      if (enterprise) {
-        const path = key ? "/v2" + ENTERPRISE : ENTERPRISE;
-        const data = ensureCode(await authCall(() => request(REALMS[account.realm].api + path, { method: "POST", headers: headers(account), body: "{}", signal }, fetchImpl)));
-        const used = number(data.credit), size = number(data.limitNum);
-        return { used, size, remain: Math.max(0, size - used) };
-      }
+    }
+    // Confirm identity before requesting quota; this also serializes token rotation.
+    if (!key) name = identity(await authCall(() => request(REALMS[account.realm].web + "/console/account", { headers: headers(account, { "Content-Type": undefined }), signal }, fetchImpl)), account);
+    account.enterpriseId ||= String(claims(account.accessToken).enterprise_id || "");
+    let credits;
+    if (key || account.enterpriseId) {
+      const route = key ? "/v2" + ENTERPRISE : ENTERPRISE;
+      const data = await authCall(() => request(REALMS[account.realm].api + route, { method: "POST", headers: headers(account), body: "{}", signal }, fetchImpl));
+      if (data.credit == null || data.limitNum == null) throw new CheckError("企业额度响应缺少用量字段", "upstream");
+      const used = number(data.credit), size = number(data.limitNum);
+      credits = { used, size, remain: Math.max(0, size - used) };
+    } else {
       try {
-        const credits = summaryCredits(ensureCode(await authCall(() => request(REALMS[account.realm].api + SUMMARY, { method: "POST", headers: headers(account), body: "{}", signal }, fetchImpl))));
-        if (credits.size > 0) return credits;
+        credits = summaryCredits(await authCall(() => request(REALMS[account.realm].api + SUMMARY, { method: "POST", headers: headers(account), body: "{}", signal }, fetchImpl)));
       } catch (error) { if (["auth", "cancelled", "network", "deployment"].includes(error.kind)) throw error; }
-      const data = ensureCode(await authCall(() => {
-        const now = new Date();
-        const stamp = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace("T", " ");
-        return request(REALMS[account.realm].api + RESOURCE, { method: "POST", headers: headers(account), signal,
-          body: JSON.stringify({ PageNumber: 1, PageSize: 100, ProductCode: "p_tcaca", Status: [0, 3], PackageEndTimeRangeBegin: stamp, PackageEndTimeRangeEnd: "2036-01-01 00:00:00" }) }, fetchImpl);
-      }));
-      return packageTotals((data.Response && data.Response.Data && data.Response.Data.Accounts) || data.Accounts || []);
-    })();
-    const values = await (profilePromise ? Promise.all([profilePromise, creditsPromise]) : Promise.all([creditsPromise]));
-    const credits = values[values.length - 1];
+      if (!credits || credits.size <= 0) {
+        const data = await authCall(() => {
+          const now = new Date();
+          const stamp = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 19).replace("T", " ");
+          return request(REALMS[account.realm].api + RESOURCE, { method: "POST", headers: headers(account), signal,
+            body: JSON.stringify({ PageNumber: 1, PageSize: 100, ProductCode: "p_tcaca", Status: [0, 3], PackageEndTimeRangeBegin: stamp, PackageEndTimeRangeEnd: "2036-01-01 00:00:00" }) }, fetchImpl);
+        });
+        const packages = data.Response?.Data?.Accounts ?? data.Accounts;
+        if (!Array.isArray(packages)) throw new CheckError("资源包响应缺少额度列表", "upstream");
+        credits = packageTotals(packages);
+      }
+    }
     return { identity: name, used: credits.used, size: credits.size, remain: credits.remain ?? Math.max(0, credits.size - credits.used), realm: account.realm };
   }
   function isInventoryDocument(value) {
@@ -227,7 +280,7 @@
     if (!uid) throw new CheckError(at + " 缺少有效的 uid", "input");
     const ts = raw.expiresAt;
     const ms = typeof ts === "number" && ts > 0 ? (ts < 1e11 ? ts * 1000 : ts) : NaN;
-    // An exported roster describes accounts; it is not the online verification queue.
+    // Only records without credentials stay in the offline inventory.
     return { uid, name: typeof raw.name === "string" ? raw.name.trim() : "", realm: credentialRealm(raw, fallbackRealm),
       enabled: typeof raw.enabled === "boolean" ? raw.enabled : null,
       expiresAt: Number.isFinite(new Date(ms).getTime()) ? ms : null };
@@ -245,23 +298,31 @@
       const objects = inventory ? value.accounts : Array.isArray(value) ? value : [value];
       if (!Array.isArray(objects)) throw new CheckError("账号清单的 accounts 必须是数组", "input");
       if (!objects.length) throw new CheckError(inventory ? "账号清单为空，没有可导入的记录" : "没有找到有效凭证", "input");
-      const rows = [];
+      const rows = [], inventoryRows = [];
       for (let i = 0; i < objects.length; i++) {
-        rows.push(inventory ? inventoryRow(objects[i], i, fallbackRealm) : normalizeCredential(objects[i], fallbackRealm));
+        try {
+          if (inventory && !hasToken(objects[i])) inventoryRows.push(inventoryRow(objects[i], i, fallbackRealm));
+          else rows.push(normalizeCredential(objects[i], fallbackRealm));
+        } catch (error) {
+          if (inventory && !error.message.startsWith("账号清单 accounts[")) throw new CheckError("账号清单 accounts[" + i + "]: " + error.message, "input");
+          throw error;
+        }
         if ((i + 1) % 500 === 0 && i + 1 < objects.length) {
           onProgress((i + 1) / objects.length);
           await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
       onProgress(1);
-      return { kind: inventory ? "inventory" : "credentials", rows };
+      if (!rows.length) return { kind: "inventory", rows: inventoryRows };
+      return inventoryRows.length ? { kind: "mixed", rows, inventoryRows } : { kind: "credentials", rows };
     }
     const accounts = [];
     let line = 0, offset = 0;
     while (offset < trimmed.length) {
       const batchEnd = Math.min(trimmed.length, offset + 256 * 1024);
       let end = trimmed.lastIndexOf("\n", batchEnd);
-      if (end <= offset) end = batchEnd;
+      if (batchEnd === trimmed.length) end = trimmed.length;
+      else if (end <= offset) { end = trimmed.indexOf("\n", batchEnd); if (end < 0) end = trimmed.length; }
       for (const row of trimmed.slice(offset, end).split(/\r?\n/)) {
         line++;
         if (!row.trim()) continue;
@@ -278,7 +339,7 @@
   }
   async function parseCredentialsAsync(text, fallbackRealm, onProgress) {
     const result = await parseImportAsync(text, fallbackRealm, onProgress);
-    if (result.kind !== "credentials") throw new CheckError("账号清单不是在线凭证", "input");
+    if (result.kind === "inventory") throw new CheckError("账号清单不是在线凭证", "input");
     return result.rows;
   }
 

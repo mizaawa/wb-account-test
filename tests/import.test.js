@@ -2,10 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseImportAsync, parseCredentialsAsync } from '../web/src/api.js';
 
-test('WBProxyCenter keeps only inventory metadata, even when the export contains tokens', async () => {
+test('WBProxyCenter tokenless records remain offline metadata', async () => {
   const doc = JSON.stringify({source:'WBProxyCenter', version:'1', exported_at:'2026-11-24', count:99, skipped:1,
-    accounts:[{name:'Demo', realm:'global', uid:'u1', expiresAt:1800000000, enabled:false, accessToken:'synthetic-ignore',
-      refreshToken:'synthetic-ignore-refresh', product:'demo', pool_scope:'demo'}, {uid:2, expiresAt:1800000000000}]});
+    accounts:[{name:'Demo', realm:'global', uid:'u1', expiresAt:1800000000, enabled:false, product:'demo', pool_scope:'demo'}, {uid:2, expiresAt:1800000000000}]});
   const result = await parseImportAsync('﻿'+doc,'cn');
   assert.deepEqual(result, { kind:'inventory', rows:[
     {uid:'u1',name:'Demo',realm:'intl',enabled:false,expiresAt:1800000000000},
@@ -37,4 +36,28 @@ test('account/auth keeps its previous credential import behavior', async () => {
   const result=await parseImportAsync(JSON.stringify({account:{uid:'one',nickname:'Example',enterpriseId:'enterprise'},auth:{accessToken:'synthetic-one',domain:'example.test',expiresAt:1800000000,realm:'intl',refreshToken:'synthetic-refresh'}}));
   assert.equal(result.kind,'credentials');assert.equal(result.rows.length,1);
   assert.equal(result.rows[0].uid,'one');assert.equal(result.rows[0].realm,'intl');
+});
+
+
+test('WBProxyCenter token-bearing exports become online credentials, with mixed metadata retained separately', async () => {
+  const doc = JSON.stringify({source:'WBProxyCenter',accounts:[{uid:'one',accessToken:'synthetic-one',domain:'www.codebuddy.cn'}, {uid:'two'}]});
+  const result = await parseImportAsync(doc, 'intl');
+  assert.equal(result.kind, 'mixed');
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0].realm, 'cn');
+  assert.equal(result.rows[0].domain, 'www.codebuddy.cn');
+  assert.equal(result.inventoryRows[0].uid, 'two');
+  assert.equal((await parseCredentialsAsync(doc)).length, 1);
+  const online = await parseImportAsync(JSON.stringify({accounts:[{access_token:'synthetic',uid:'u'}]}));
+  assert.equal(online.kind, 'credentials');
+});
+test('invalid token fields do not silently downgrade a credential to an offline record', async () => {
+  await assert.rejects(parseImportAsync(JSON.stringify({accounts:[{uid:'u',accessToken:{private:'never-echo'}}]})), err =>
+    err.kind === 'input' && err.message.includes('accounts[0]') && !err.message.includes('never-echo'));
+});
+test('JSONL parser never splits a long individual record at the progress batch boundary', async () => {
+  const huge = JSON.stringify({accessToken:'synthetic',nickname:'x'.repeat(300000)});
+  const rows = await parseCredentialsAsync(huge+'\n'+JSON.stringify({access_token:'other'}));
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].nickname.length, 300000);
 });

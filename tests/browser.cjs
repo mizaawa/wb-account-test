@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const { checkRealmSelect } = require('./realm-select.cjs');
 const { checkInventory } = require('./inventory-browser.cjs');
+const { checkCredentialExports } = require('./credential-browser.cjs');
 const root = path.resolve(__dirname, '..');
 const browserName = process.env.WB_TEST_BROWSER === 'webkit' ? 'webkit' : 'chromium';
 const type = browserName === 'webkit' ? webkit : chromium;
@@ -53,7 +54,7 @@ async function ready() {
 
   await checkInventory(page, apiCalls);
   assert.match(await page.locator('.identity-copy').innerText(),/browser-fixture/);
-  await page.getByRole('button',{name:/验证在线凭证/}).click();
+  await page.getByRole('button',{name:/凭证测活/}).click();
   try { assert.ok(await realmSelect.isDisabled(), 'realm must stay locked while checking'); }
   finally { finishMock(); }
   await page.locator('.status-success').waitFor({timeout:10000});
@@ -86,6 +87,8 @@ async function ready() {
   await page.getByRole('button',{name:'清空', exact:true}).click();
   assert.equal(await page.locator('.inventory').count(),0);
   assert.equal(await page.locator('.stat-card>strong').first().innerText(),'0');
+  await checkCredentialExports(page);
+  assert.equal(errors.length,0);
   console.log(`${browserName}: roster imports, Vue UI, >2k unlimited import, pagination, mock WorkBuddy check through same-origin Go API, no browser CORS, no mobile overflow — passed`);
  } finally { if(browser) await browser.close(); if(server){server.kill();await wait(150);} }
 })().catch(error=>{console.error(error);process.exitCode=1});

@@ -23,12 +23,12 @@ type relayHandler struct {
 // Only these read-only account/usage endpoints and token refresh are reachable.
 // The caller cannot supply a URL, host, path, redirect target or query string.
 func routeFor(realm, action string) (upstreamRoute, bool) {
-	web, billing := "", ""
+	web, billing, refresh := "", "", ""
 	switch realm {
 	case "cn":
-		web, billing = "https://www.workbuddy.cn", "https://www.codebuddy.cn"
+		web, billing, refresh = "https://www.workbuddy.cn", "https://www.codebuddy.cn", "https://copilot.tencent.com"
 	case "intl":
-		web, billing = "https://www.workbuddy.ai", "https://www.workbuddy.ai"
+		web, billing, refresh = "https://www.workbuddy.ai", "https://www.workbuddy.ai", "https://www.workbuddy.ai"
 	default:
 		return upstreamRoute{}, false
 	}
@@ -38,7 +38,7 @@ func routeFor(realm, action string) (upstreamRoute, bool) {
 		"resource":       {http.MethodPost, billing + "/v2/billing/meter/get-user-resource"},
 		"enterprise":     {http.MethodPost, billing + "/billing/meter/get-enterprise-user-usage"},
 		"enterprise-key": {http.MethodPost, billing + "/v2/billing/meter/get-enterprise-user-usage"},
-		"refresh":        {http.MethodPost, web + "/v2/plugin/auth/token/refresh"},
+		"refresh":        {http.MethodPost, refresh + "/v2/plugin/auth/token/refresh"},
 	}
 	route, ok := routes[action]
 	return route, ok
@@ -119,7 +119,7 @@ func (h *relayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		relayError(w, 500, "request", "请求创建失败")
 		return
 	}
-	for _, key := range []string{"Authorization", "X-User-Id", "X-Domain", "X-Enterprise-Id", "X-No-Enterprise-Id", "X-API-Key", "X-Refresh-Token", "X-Auth-Refresh-Source", "X-Product", "Accept-Language"} {
+	for _, key := range []string{"Authorization", "X-User-Id", "X-Domain", "X-Enterprise-Id", "X-Tenant-Id", "X-No-Enterprise-Id", "X-API-Key", "X-Refresh-Token", "X-Auth-Refresh-Source", "X-Product", "Accept-Language"} {
 		if value := r.Header.Get(key); value != "" {
 			req.Header.Set(key, value)
 		}

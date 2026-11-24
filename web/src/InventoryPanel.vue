@@ -10,7 +10,7 @@ const fmt = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 's
 <template>
   <section class="inventory" aria-labelledby="inventory-heading">
     <h3 id="inventory-heading">WBProxyCenter 本地清单 <span>{{ rows.length.toLocaleString() }} 条</span></h3>
-    <p>以下是导出时的记录，不代表实时账号状态。清单令牌不会保留，也不会参与在线验证。</p>
+    <p>以下记录没有 accessToken，仅展示导出信息，不能测活。请导入包含令牌的完整导出；带凭证的账号会显示在下方测活列表。</p>
     <ul class="inventory-list">
       <li v-for="row in visible" :key="row.realm + ':' + row.uid">
         <div><strong>{{ row.name || '未命名账号' }}</strong><small>{{ row.realm === 'intl' ? '国际版' : '中国版' }} · UID {{ row.uid }}</small></div>

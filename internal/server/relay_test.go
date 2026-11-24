@@ -168,3 +168,25 @@ func TestRelaySameHostTLSOrigin(t *testing.T) {
 		t.Fatal("relay must time out before browser")
 	}
 }
+
+func TestRefreshTargetsAndTenantHeader(t *testing.T) {
+	for realm, target := range map[string]string{"cn": "https://copilot.tencent.com/v2/plugin/auth/token/refresh", "intl": "https://www.workbuddy.ai/v2/plugin/auth/token/refresh"} {
+		route, ok := routeFor(realm, "refresh")
+		if !ok || route.url != target {
+			t.Fatalf("unexpected refresh target for %s: %s", realm, route.url)
+		}
+	}
+	h := fixtureRelay(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Tenant-Id") != "fixture-tenant" {
+			t.Fatal("missing enterprise tenant")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"credit":0,"limitNum":10}}`))}, nil
+	})
+	r := relayRequest("POST", "/api/cn/enterprise", "{}")
+	r.Header.Set("X-Tenant-Id", "fixture-tenant")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("tenant request: %d", w.Code)
+	}
+}

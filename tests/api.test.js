@@ -154,3 +154,59 @@ test("empty JSON arrays and malformed entries fail with clear input errors", asy
   await assert.rejects(parseCredentialsAsync("[]"), /没有找到有效凭证/);
   await assert.rejects(parseCredentialsAsync('{"accessToken":"ok"}\n{bad'), /第 2 行/);
 });
+
+
+test('upstream-style normalization recovers realm, UID, raw metadata and expiry without trusting stale realm', () => {
+  const token = jwt({sub:'derived',iss:'https://www.codebuddy.cn/auth',exp:2000000000,enterprise_id:'team'});
+  const [row] = parseCredentials(JSON.stringify([{access_token:token,refresh_token:'r',expires_at:1,
+    realm:'intl',auth_raw:{domain:'www.workbuddy.ai'},profile_raw:{nickname:'Raw name'}}]), 'intl');
+  assert.equal(row.uid,'derived'); assert.equal(row.realm,'cn'); assert.equal(row.domain,'copilot.tencent.com');
+  assert.equal(row.nickname,'Raw name'); assert.equal(row.enterpriseId,'team'); assert.equal(row.expiresAt,2000000000);
+  const [raw] = parseCredentials(JSON.stringify({auth_raw:{accessToken:'opaque',domain:'www.codebuddy.cn'},profile_raw:{uid:'raw'}}),'intl');
+  assert.equal(raw.uid,'raw'); assert.equal(raw.realm,'cn'); assert.equal(raw.domain,'www.codebuddy.cn');
+});
+test('domain inference ignores lookalike suffixes and respects explicit region without evidence', () => {
+  assert.equal(parseCredentials(JSON.stringify({accessToken:'opaque',domain:'codebuddy.cn.attacker.test',realm:'intl'}))[0].realm,'intl');
+  assert.equal(parseCredentials(JSON.stringify({accessToken:'ck_id.secret',realm:'intl'}))[0].realm,'cn');
+});
+test('business-code authentication failures refresh and persist rotation for subsequent checks', async () => {
+  const row = parseCredentials(' {"uid":"u","accessToken":"old","refreshToken":"r1"} ')[0];
+  let refreshes=0; const calls=[];
+  const fetchImpl=apiFetch((url,options)=>{
+    calls.push(url);
+    if(url.endsWith('/refresh')) {refreshes++;assert.equal(options.headers['X-Refresh-Token'],'r1'); return json({code:0,data:{data:{accessToken:'fresh',refreshToken:'r2'}}});}
+    if(options.headers.Authorization==='Bearer old')return json({code:401,msg:'synthetic-private-upstream-message'});
+    if(url.endsWith('/profile'))return json({code:0,data:{uid:'u'}});
+    return json({code:0,data:{Packages:[{CycleTotalCapacity:100,CycleUsedCapacity:10,CycleRemainCapacity:85}]}});
+  });
+  const result=await checkAccount(row,{fetchImpl});
+  assert.equal(refreshes,1);assert.equal(row.accessToken,'fresh');assert.equal(row.refreshToken,'r2');assert.equal(result.remain,85);
+  assert.ok(calls.indexOf('api/cn/summary')>calls.lastIndexOf('api/cn/profile'));
+  await checkAccount(row,{fetchImpl});assert.equal(refreshes,1);
+  assert.equal(relayURL('https://copilot.tencent.com/v2/plugin/auth/token/refresh'),'api/cn/refresh');
+});
+test('refresh rotation survives quota failure, but failed refresh never mutates credentials', async () => {
+  const row=parseCredentials(JSON.stringify({accessToken:jwt({exp:1}),refreshToken:'r'}))[0];
+  await assert.rejects(checkAccount(row,{fetchImpl:apiFetch(url=>{
+    if(url.endsWith('/refresh')) return json({data:{accessToken:'rotated',refreshToken:'rotated-refresh'}});
+    if(url.endsWith('/profile'))return json({data:{nickname:'ok'}});
+    return json({},500);
+  })}));
+  assert.equal(row.refreshToken,'rotated-refresh');
+  const bad=parseCredentials(JSON.stringify({accessToken:jwt({exp:1}),refreshToken:'unchanged'}))[0];
+  await assert.rejects(checkAccount(bad,{fetchImpl:apiFetch(()=>json({code:401,data:{accessToken:'must-not-apply'}}))}),err=>err.kind==='auth');
+  assert.equal(bad.refreshToken,'unchanged');assert.notEqual(bad.accessToken,'must-not-apply');
+});
+test('missing profile or quota fields are not reported as healthy zero balance', async () => {
+  await assert.rejects(checkAccount(parseCredentials('{"accessToken":"opaque"}')[0],{fetchImpl:apiFetch(()=>json({code:0,data:{}}))}),/身份信息/);
+  await assert.rejects(checkAccount(parseCredentials('{"accessToken":"opaque"}')[0],{fetchImpl:apiFetch(url=>json({data:url.endsWith('/profile')?{uid:'u'}:{}}))}),/额度列表/);
+  await assert.rejects(checkAccount(parseCredentials('{"accessToken":"ck_id.secret"}')[0],{fetchImpl:apiFetch(()=>json({data:{}}))}),/用量字段/);
+});
+test('enterprise claims supply both tenant headers and select enterprise quota', async () => {
+  const row=parseCredentials(JSON.stringify({accessToken:jwt({sub:'u',enterprise_id:'tenant'})}))[0];
+  const result=await checkAccount(row,{fetchImpl:apiFetch((url,options)=>{
+    assert.equal(options.headers['X-Enterprise-Id'],'tenant');assert.equal(options.headers['X-Tenant-Id'],'tenant');
+    if(url.endsWith('/profile'))return json({data:{uid:'u'}});
+    assert.equal(url,'api/cn/enterprise');return json({data:{credit:2,limitNum:10}});
+  })});assert.equal(result.remain,8);
+});

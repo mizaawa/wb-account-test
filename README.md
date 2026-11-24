@@ -25,9 +25,9 @@
 {"uid":"your-uid","accessToken":"your-access-token","refreshToken":"your-refresh-token","realm":"cn"}
 ```
 
-也接受 `access_token` / `refresh_token` 字段及常见 `account`、`profile`、`user`、`auth`、`tokens`、`credentials` 包装格式。`realm` 可为 `cn` 或 `intl`；缺省时采用页面的默认选择。
+也接受 `access_token` / `refresh_token` 字段及常见 `account`、`profile`、`user`、`auth`、`tokens`、`credentials` 包装格式。也支持 `auth_raw` / `profile_raw` 和毫秒级 `expires_at`。地区优先从 JWT issuer、domain 推断，再使用导出地区或页面默认选择；缺失 UID 时读取 JWT sub。
 
-**WBProxyCenter 导出清单**：直接拖入或粘贴带顶层 `accounts` 数组的完整 JSON，无需改名或删除外层。可以与 `account` + `auth` 单账号文件一并选择。清单在独立的「WBProxyCenter 本地清单」中分页显示，按地区和 UID 合并，重复导入时使用后导入的记录。仅展示导出时的名称、UID、地区、启用状态及到期时间；清单令牌不会保留或发往在线验证接口，启用状态不是实时验证结果。
+**WBProxyCenter 导出**：直接拖入或粘贴带顶层 `accounts` 数组的完整 JSON，无需修改外层。含 `accessToken` / `access_token` 的记录进入在线账号列表，点击「凭证测活」后才查询资料和额度；无令牌记录保留在独立的本地清单，并提示无法测活。同一地区和 UID 的重复凭证使用后导入记录替换，避免重叠导出重复计数。支持与 `account` + `auth`、蛇形字段数组混合导入；导入本身不发送网络请求，导出中的 enabled 不等于实时验证结果。
 
 **不要将真实令牌提交到 Git 仓库、公开日志或不可信服务器。**应用不保存令牌；刷新页面即可清除页面内存中的导入数据。
 
@@ -48,7 +48,7 @@ docker compose logs -f wb-pulse
 docker compose down
 ```
 
-发布镜像为 `ghcr.io/mizaawa/wb-account-test:2.0.3`。将公网部署放在受控的 HTTPS 反向代理之后，设置访问认证和限流；不要开放成任意访问的公共凭证检测服务。反代必须将页面、构建资源及 `/api/` 转发到同一 Go 服务。使用 `/pulse/` 等子路径时须保留尾部斜杠，并一并转发该子路径。
+发布镜像为 `ghcr.io/mizaawa/wb-account-test:2.0.4`。将公网部署放在受控的 HTTPS 反向代理之后，设置访问认证和限流；不要开放成任意访问的公共凭证检测服务。反代必须将页面、构建资源及 `/api/` 转发到同一 Go 服务。使用 `/pulse/` 等子路径时须保留尾部斜杠，并一并转发该子路径。
 
 ### CORS 与请求链路
 
@@ -93,16 +93,20 @@ npm run test:browser
 将 `WB_IMAGE` 固定到所需标签后升级；保留上一个标签可随时回滚：
 
 ```sh
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.3 docker compose pull
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.3 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.4 docker compose pull
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.4 docker compose up -d
 # 回滚到仍保留的旧版，例如：
-WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.2 docker compose up -d
+WB_IMAGE=ghcr.io/mizaawa/wb-account-test:2.0.3 docker compose up -d
 ```
 
 ## 本地离线安装包
 
-先执行 `npm ci`，再运行 `node scripts/build-release.cjs`。脚本会先重新构建 Vue，再交叉编译 Windows／Linux amd64／arm64 服务端包，并使用本机 Docker Buildx 构建双架构离线镜像。该操作只在 `test-results/release-v2.0.3/` 生成本地安装包；不会推送代码或发布 GitHub Release。
+先执行 `npm ci`，再运行 `node scripts/build-release.cjs`。脚本会先重新构建 Vue，再交叉编译 Windows／Linux amd64／arm64 服务端包，并使用本机 Docker Buildx 构建双架构离线镜像。该操作只在 `test-results/release-v2.0.4/` 生成本地安装包；不会推送代码或发布 GitHub Release。
 
 ## GitHub 发布
 
-推送 `v2.0.3` 标签后，GitHub Actions 会重新构建前端、运行 Go／Node／浏览器测试，随后构建多架构 Docker 镜像并创建 GitHub Release。需要具备仓库推送权限及 Actions `contents: write` / `packages: write` 权限。
+推送 `v2.0.4` 标签后，GitHub Actions 会重新构建前端、运行 Go／Node／浏览器测试，随后构建多架构 Docker 镜像并创建 GitHub Release。需要具备仓库推送权限及 Actions `contents: write` / `packages: write` 权限。
+
+## 账号链路与验收
+
+解析与验证链路、失败语义及回归覆盖见 `docs/credential-liveness.md`；上游适配说明及 MIT 许可见 `THIRD_PARTY_NOTICES.md`。测活仅查询账号资料与额度，不创建会话或调用收费模型。刷新后的令牌只更新当前页面内存，不覆盖原始导入文件。

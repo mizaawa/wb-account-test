@@ -14,7 +14,7 @@ import (
 //go:embed static
 var StaticFiles embed.FS
 
-const Version = "2.0.3"
+const Version = "2.0.4"
 
 // New returns the web application handler.
 func New() http.Handler {

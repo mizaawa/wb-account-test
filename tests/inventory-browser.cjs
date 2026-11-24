@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 // Synthetic fixtures only. Import must not issue even a status request.
 async function checkInventory(page, apiCalls) {
   const envelope = accounts => ({ source:'WBProxyCenter', version:'1', count:accounts.length, skipped:0, accounts });
-  const row = { uid:'roster-one', name:'Demo one', realm:'cn', enabled:true, expiresAt:1800000000, accessToken:'synthetic-never-relay' };
+  const row = { uid:'roster-one', name:'Demo one', realm:'cn', enabled:true, expiresAt:1800000000 };
   await page.locator('#credential-input').fill(JSON.stringify(envelope([row])));
   await page.getByRole('button',{name:/解析并导入/}).click();
   const inventory = page.getByRole('region',{name:/WBProxyCenter 本地清单/});

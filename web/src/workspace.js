@@ -17,6 +17,7 @@ const importProgress = reactive({ visible: false, percent: 0, label: '', mode: '
 const toastText = shallowRef('')
 const notice = shallowRef('')
 const fileInput = shallowRef(null)
+let importFinishTimer
 let toastTimer
 let importQueue = []
 let importingQueue = false
@@ -43,7 +44,7 @@ function toast(message) {
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toastText.value = '' }, 3200)
 }
-function keyOf(credential) { return JSON.stringify([credential.realm, credential.uid, credential.accessToken]) }
+function keyOf(credential) { return JSON.stringify([credential.realm, credential.uid ? "uid" : "token", credential.uid || credential.accessToken]) }
 function addIndex(list, indexId, positionMap) {
   positionMap.set(indexId, list.length)
   list.push(indexId)
@@ -78,14 +79,25 @@ function changeStatus(record, status, detail = null) {
   }
 }
 function addCredentials(credentials) {
-  const known = new Set(accounts.value.map(row => keyOf(row.credential)))
+  const known = new Map(accounts.value.map(row => [keyOf(row.credential), row]))
   const added = []
-  let duplicates = 0
+  let duplicates = 0, updated = 0
   for (const credential of credentials) {
     const key = keyOf(credential)
-    if (known.has(key)) { duplicates++; continue }
-    known.add(key)
+    const existing = known.get(key)
+    if (existing) {
+      const sameToken = existing.credential.accessToken === credential.accessToken
+      if (sameToken && !credential.refreshToken) credential.refreshToken = existing.credential.refreshToken
+      if (JSON.stringify(existing.credential) === JSON.stringify(credential)) { duplicates++; continue }
+      existing.credential = credential
+      existing.result = null
+      existing.error = null
+      changeStatus(existing, 'pending')
+      updated++
+      continue
+    }
     const record = { index: accounts.value.length + added.length, credential, status: 'pending', result: null, error: null }
+    known.set(key, record)
     added.push(record)
     addIndex(index.value.all, record.index, positions.all)
     counters.pending++
@@ -96,7 +108,7 @@ function addCredentials(credentials) {
   index.value = { ...index.value }
   if (activeFilter.value !== 'all' && activeFilter.value !== 'pending') activeFilter.value = 'all'
   currentPage.value = 1
-  return { added: added.length, duplicates }
+  return { added: added.length, duplicates, updated }
 }
 function setFilter(key) { activeFilter.value = key; currentPage.value = 1 }
 function clearAll() {
@@ -121,7 +133,6 @@ function updateImport(percent, label, mode) {
 }
 function finishImport() {
   importProgress.visible = false
-  importing.value = false
 }
 function readFile(file, onProgress) {
   return new Promise((resolve, reject) => {
@@ -138,18 +149,15 @@ async function ingestText(text, label) {
   const imported = await parseImportAsync(text, realm.value, fraction => {
     updateImport(35 + fraction * 55, `${label} · 正在解析凭证`, 'parse')
   })
-  if (imported.kind === 'inventory') {
-    const key = row => JSON.stringify([row.realm, row.uid])
-    const merged = new Map(inventoryRows.value.map(row => [key(row), row]))
-    for (const row of imported.rows) merged.set(key(row), row)
-    inventoryRows.value = Array.from(merged.values())
-    toast(`已读取 ${imported.rows.length.toLocaleString()} 条清单记录，合并后共 ${merged.size.toLocaleString()} 条`)
-    return
-  }
-  const result = addCredentials(imported.rows)
-  if (!result.added && result.duplicates) toast(`跳过 ${result.duplicates.toLocaleString()} 个已导入的重复账号`)
-  else if (result.duplicates) toast(`已添加 ${result.added.toLocaleString()} 个账号，跳过 ${result.duplicates.toLocaleString()} 个重复项`)
-  else toast(`已导入 ${result.added.toLocaleString()} 个账号`)
+  const offline = imported.kind === 'inventory' ? imported.rows : imported.inventoryRows || []
+  const result = addCredentials(imported.kind === 'inventory' ? [] : imported.rows)
+  const key = row => JSON.stringify([row.realm, row.uid])
+  const onlineKeys = new Set(accounts.value.map(row => key(row.credential)))
+  const merged = new Map(inventoryRows.value.map(row => [key(row), row]))
+  for (const row of offline) merged.set(key(row), row)
+  inventoryRows.value = Array.from(merged.values()).filter(row => !onlineKeys.has(key(row)))
+  if (imported.kind === 'inventory') toast('已导入 ' + offline.length.toLocaleString() + ' 条无令牌清单记录；测活需要 accessToken')
+  else toast('凭证：新增 ' + result.added.toLocaleString() + ' · 更新 ' + result.updated.toLocaleString() + ' · 重复 ' + result.duplicates.toLocaleString())
   return result
 }
 async function processFiles(files) {
@@ -158,6 +166,7 @@ async function processFiles(files) {
     updateImport(0, `已排队 ${importQueue.length.toLocaleString()} 个文件`, 'queued')
     return
   }
+  clearTimeout(importFinishTimer)
   importingQueue = true
   notice.value = ''
   importQueue.push(...files)
@@ -193,11 +202,12 @@ async function processFiles(files) {
       notice.value = errors.slice(0, 4).join('；') + (errors.length > 4 ? `；另有 ${errors.length - 4} 个文件读取失败` : '')
       toast(`${errors.length.toLocaleString()} 个文件未能导入，请查看提示`)
     }
-    setTimeout(finishImport, errors.length ? 5000 : 1100)
+    importFinishTimer = setTimeout(finishImport, errors.length ? 5000 : 1100)
   }
 }
 async function importPasted() {
   if (running.value || importing.value || !inputText.value.trim()) return
+  clearTimeout(importFinishTimer)
   importing.value = true
   notice.value = ''
   try {
@@ -208,8 +218,9 @@ async function importPasted() {
     notice.value = error.message
     toast('导入失败，请检查凭证格式')
   } finally {
+    importing.value = false
     updateImport(100, '粘贴内容处理完成', 'complete')
-    setTimeout(finishImport, 900)
+    importFinishTimer = setTimeout(finishImport, 900)
   }
 }
 function onFiles(event) {
@@ -246,7 +257,7 @@ async function startCheck(rows = null) {
     toast('请先导入账号凭证')
     return
   }
-  const targets = rows ?? (counters.failed ? accounts.value.filter(row => row.status === 'failed') : accounts.value)
+  const targets = rows ?? accounts.value
   if (!targets.length) { toast('没有需要重新检测的账号'); return }
   for (const row of targets) changeStatus(row, 'pending')
   running.value = true
