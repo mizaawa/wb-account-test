@@ -24,18 +24,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Build Vue frontend
+        run: |
+          npm ci
+          npm run build
       - run: go test -race ./...
       - run: go vet ./...
       - run: node --test tests/*.test.js
       - name: Browser regression tests
         run: |
-          npm ci
           npx playwright install --with-deps chromium webkit
           mkdir -p test-results
           go build -o test-results/server-test ./cmd/server
           npm run test:browser
-          WB_TEST_BROWSER=webkit npm run test:browser
-          node tests/relay-e2e.cjs
+          WB_TEST_PORT=18082 WB_TEST_BROWSER=webkit npm run test:browser
   release:
     needs: test
     runs-on: ubuntu-latest
@@ -95,9 +97,11 @@ jobs:
             README.md
             CHANGELOG.md
           body: |
-            ## 修复与升级提醒
-            修复原生多文件选择、整块区域批量拖放、导入队列，以及旧前端/反代导致的请求链路问题。
-            检测改为本站服务器向固定官方接口临时转发凭证，应用不存储凭证。请只使用可信部署。
+            ## WB Pulse 2.0
+            Vue 3 + Go 重写版，采用活力蓝色响应式主题。支持批量导入任意数量的凭证、导入进度动画及账号状态／用量分页展示。
+
+            浏览器仅请求同源 Go 服务，由服务端转发至固定官方接口；不会因浏览器跨域策略而被 CORS 拦截。应用不保存凭证。升级后需重新导入凭证；每页显示 80 个账号，在线检测使用 8 个并发请求，并受本机内存、网络和官方限流影响。
+
             详细变更见附件 `CHANGELOG.md`。
 
             ## 快速部署

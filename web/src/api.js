@@ -1,13 +1,6 @@
-/* WB Pulse: same-origin API client. The deployment server relays fixed official endpoints. */
-(function (root, factory) {
-  const api = factory();
-  if (typeof module === "object" && module.exports) module.exports = api;
-  else root.WBApi = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  "use strict";
-  const VERSION = "1.1.2";
-  const apiScript = typeof document !== "undefined" ? document.currentScript || document.querySelector("script[data-wb-api]") : null;
-  const relayBase = apiScript?.src ? new URL("./", apiScript.src).href : null;
+
+  const VERSION = "2.0.0";
+  const relayBase = typeof document !== "undefined" ? document.baseURI : null;
   let relayReady = null;
   function localURL(relative) {
     if (!relayBase) return relative;
@@ -79,7 +72,6 @@
     try { const value = JSON.parse(trimmed); objects = Array.isArray(value) ? value : [value]; }
     catch (_) { objects = trimmed.split(/\r?\n/).filter(line => line.trim()).map((line, index) => { try { return JSON.parse(line); } catch (_) { throw new CheckError("第 " + (index + 1) + " 行不是有效 JSON", "input"); } }); }
     if (!objects.length) throw new CheckError("没有找到有效凭证", "input");
-    if (objects.length > 2000) throw new CheckError("单次最多检测 2000 个账号", "input");
     return objects.map(raw => normalizeCredential(raw, fallbackRealm));
   }
   function headers(account, extra) {
@@ -224,5 +216,45 @@
     const credits = values[values.length - 1];
     return { identity: name, used: credits.used, size: credits.size, remain: credits.remain ?? Math.max(0, credits.size - credits.used), realm: account.realm };
   }
-  return { REALMS, CheckError, parseCredentials, normalizeCredential, checkAccount, relayURL, isApiKey, expired, packageTotals, summaryCredits };
-});
+  async function parseCredentialsAsync(text, fallbackRealm, onProgress = () => {}) {
+    const trimmed = String(text || "").trim();
+    if (!trimmed) throw new CheckError("请先粘贴或导入凭证", "input");
+    let objects;
+    try {
+      const value = JSON.parse(trimmed);
+      objects = Array.isArray(value) ? value : [value];
+      if (!objects.length) throw new CheckError("没有找到有效凭证", "input");
+      const accounts = [];
+      for (let i = 0; i < objects.length; i += 500) {
+        const end = Math.min(objects.length, i + 500);
+        accounts.push(...objects.slice(i, end).map(raw => normalizeCredential(raw, fallbackRealm)));
+        onProgress(end / objects.length);
+        if (end < objects.length) await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      return accounts;
+    } catch (error) {
+      if (error instanceof CheckError) throw error;
+      if (trimmed.startsWith("[")) throw new CheckError("JSON 数组格式错误，请检查凭证文件", "input");
+    }
+    const accounts = [];
+    let line = 0, offset = 0;
+    while (offset < trimmed.length) {
+      const batchEnd = Math.min(trimmed.length, offset + 256 * 1024);
+      let end = trimmed.lastIndexOf("\n", batchEnd);
+      if (end <= offset) end = batchEnd;
+      for (const row of trimmed.slice(offset, end).split(/\r?\n/)) {
+        line++;
+        if (!row.trim()) continue;
+        let raw;
+        try { raw = JSON.parse(row); } catch (_) { throw new CheckError("第 " + line + " 行不是有效 JSON", "input"); }
+        accounts.push(normalizeCredential(raw, fallbackRealm));
+      }
+      offset = end < trimmed.length && trimmed[end] === "\n" ? end + 1 : end;
+      onProgress(Math.min(1, offset / trimmed.length));
+      if (offset < trimmed.length) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    if (!accounts.length) throw new CheckError("没有找到有效凭证", "input");
+    return accounts;
+  }
+
+  export { REALMS, CheckError, parseCredentials, parseCredentialsAsync, normalizeCredential, checkAccount, relayURL, isApiKey, expired, packageTotals, summaryCredits };

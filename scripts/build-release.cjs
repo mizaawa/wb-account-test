@@ -25,6 +25,7 @@ async function docs(dir,type,arch) {
 }
 (async()=>{
  await fs.mkdir(assets,{recursive:true});
+ await run(process.execPath,['node_modules/vite/bin/vite.js','build']);
  for(const os of ['windows','linux']) for(const arch of ['amd64','arm64']) {
   const name='wb-pulse-'+version+'-'+os+'-'+arch, dir=path.join(out,name);
   await fs.mkdir(dir,{recursive:true});

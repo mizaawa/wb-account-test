@@ -1,12 +1,10 @@
 .git
 .github
-README.md
-Dockerfile
-docker-compose*.yaml
-tests
-*.exe
-
 node_modules
 test-results
-package*.json
+*.exe
+*.test
+.DS_Store
+README.md
 CHANGELOG.md
+docker-compose*.yaml

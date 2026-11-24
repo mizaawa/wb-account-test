@@ -1,7 +1,7 @@
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const { parseCredentials, checkAccount, relayURL, CheckError } = require("../internal/server/static/api.js");
-const { runPool } = require("../internal/server/static/app.js");
+import test from "node:test";
+import assert from "node:assert/strict";
+import { parseCredentials, parseCredentialsAsync, checkAccount, relayURL, CheckError } from "../web/src/api.js";
+import { runPool } from "../web/src/pool.js";
 
 function jwt(payload) {
   const part = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -136,4 +136,21 @@ test("origin rejection is not misreported as expired credentials or refreshed", 
 test("cancellation during response body reading stays cancelled", async () => {
   const controller = new AbortController();
   await assert.rejects(checkAccount(parseCredentials('{"accessToken":"ck_fixture.secret"}')[0], { signal: controller.signal, fetchImpl: apiFetch(() => ({ ok: true, status: 200, json: async () => { controller.abort(); throw new Error("aborted stream"); } })) }), error => error.kind === "cancelled");
+});
+
+test("credential import has no account cap and reports incremental progress", async () => {
+  const credentials = Array.from({ length: 5005 }, (_, i) => JSON.stringify({ uid: `bulk-${i}`, accessToken: `synthetic-${i}`, realm: i % 2 ? "cn" : "intl" })).join("\n");
+  const progress = [];
+  const parsed = await parseCredentialsAsync(credentials, "cn", ratio => progress.push(ratio));
+  assert.equal(parsed.length, 5005);
+  assert.equal(parsed[4999].uid, "bulk-4999");
+  assert.equal(parsed[5004].realm, "intl");
+  assert.ok(progress.length > 1);
+  assert.equal(progress.at(-1), 1);
+  assert.equal(parseCredentials(credentials).length, 5005);
+});
+
+test("empty JSON arrays and malformed entries fail with clear input errors", async () => {
+  await assert.rejects(parseCredentialsAsync("[]"), /没有找到有效凭证/);
+  await assert.rejects(parseCredentialsAsync('{"accessToken":"ok"}\n{bad'), /第 2 行/);
 });

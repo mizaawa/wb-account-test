@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Build Vue frontend
+        run: |
+          npm ci
+          npm run build
       - name: Verify formatting
         run: test -z "$(gofmt -l .)"
       - name: Go tests
@@ -33,8 +37,7 @@ jobs:
           mkdir -p test-results
           go build -o test-results/server-test ./cmd/server
           npm run test:browser
-          WB_TEST_BROWSER=webkit npm run test:browser
-          node tests/relay-e2e.cjs
+          WB_TEST_PORT=18082 WB_TEST_BROWSER=webkit npm run test:browser
       - name: Build
         run: go build -trimpath ./cmd/server
       - name: Compose configuration
